@@ -24,6 +24,12 @@ public class ObjectPickup : MonoBehaviour
     [SerializeField] private Transform holdPoint;
     [SerializeField] private LayerMask pickupLayerMask = ~0; // Default to all layers
 
+    [Header("Inventory Box Fixed Position")]
+    [Tooltip("Local position offset for inventory box when held (fixed in front of camera).")]
+    [SerializeField] private Vector3 boxHoldOffset = new Vector3(0.3f, -0.3f, 0.6f);
+    [Tooltip("Local rotation for inventory box when held (euler angles).")]
+    [SerializeField] private Vector3 boxHoldRotation = new Vector3(10f, -15f, 0f);
+
     [Header("Debug")]
     [SerializeField] private bool showDebugRay = true;
 
@@ -33,6 +39,7 @@ public class ObjectPickup : MonoBehaviour
     private Collider _heldCollider;
     private float _currentHoldDistance;
     private IPlaceable _currentPlaceable;
+    private bool _isHoldingInventoryBox = false;
 
     void Start()
     {
@@ -64,6 +71,12 @@ public class ObjectPickup : MonoBehaviour
             if (_heldObject == null)
             {
                 TryPickup();
+            }
+            // Check if we're in box-to-shelf placement mode
+            else if (ItemPlacementManager.Instance != null && ItemPlacementManager.Instance.IsPlacementReady())
+            {
+                // Place from inventory box onto shelf
+                ItemPlacementManager.Instance.TryPlaceFromBox();
             }
             else if (_currentPlaceable != null && _currentPlaceable.CanPlaceItem(_heldObject))
             {
@@ -118,6 +131,9 @@ public class ObjectPickup : MonoBehaviour
 
     void FixedUpdate()
     {
+        // Skip physics-based holding for inventory box (it's fixed to camera)
+        if (_isHoldingInventoryBox) return;
+
         // Smoothly move held object to hold point
         if (_heldObject != null && _heldRigidbody != null)
         {
@@ -158,19 +174,50 @@ public class ObjectPickup : MonoBehaviour
         _heldRigidbody = rb;
         _heldCollider = col;
 
-        // Disable gravity and rotation while holding
-        _heldRigidbody.useGravity = false;
-        _heldRigidbody.freezeRotation = true;
+        // Check if this is an inventory box
+        _isHoldingInventoryBox = obj.GetComponent<InventoryBox>() != null;
 
-        // Optional: Disable collision with player to prevent pushing
-        // You may want to handle this differently based on your setup
-        _heldRigidbody.interpolation = RigidbodyInterpolation.Interpolate;
+        if (_isHoldingInventoryBox)
+        {
+            // Fixed position: Make kinematic and parent to camera
+            _heldRigidbody.isKinematic = true;
+            _heldRigidbody.useGravity = false;
+            _heldRigidbody.linearVelocity = Vector3.zero;
+            _heldRigidbody.angularVelocity = Vector3.zero;
+
+            // Disable collider to prevent blocking view
+            if (_heldCollider != null)
+                _heldCollider.enabled = false;
+
+            // Parent to camera and set fixed position
+            _heldObject.transform.SetParent(_playerCamera.transform);
+            _heldObject.transform.localPosition = boxHoldOffset;
+            _heldObject.transform.localRotation = Quaternion.Euler(boxHoldRotation);
+        }
+        else
+        {
+            // Normal physics-based holding
+            _heldRigidbody.useGravity = false;
+            _heldRigidbody.freezeRotation = true;
+            _heldRigidbody.interpolation = RigidbodyInterpolation.Interpolate;
+        }
     }
 
     private void DropObject()
     {
         if (_heldRigidbody != null)
         {
+            if (_isHoldingInventoryBox)
+            {
+                // Unparent and re-enable physics for inventory box
+                _heldObject.transform.SetParent(null);
+
+                if (_heldCollider != null)
+                    _heldCollider.enabled = true;
+
+                _heldRigidbody.isKinematic = false;
+            }
+
             // Re-enable gravity and rotation
             _heldRigidbody.useGravity = true;
             _heldRigidbody.freezeRotation = false;
@@ -183,12 +230,24 @@ public class ObjectPickup : MonoBehaviour
         _heldObject = null;
         _heldRigidbody = null;
         _heldCollider = null;
+        _isHoldingInventoryBox = false;
     }
 
     private void ThrowObject()
     {
         if (_heldRigidbody != null)
         {
+            if (_isHoldingInventoryBox)
+            {
+                // Unparent and re-enable physics for inventory box
+                _heldObject.transform.SetParent(null);
+
+                if (_heldCollider != null)
+                    _heldCollider.enabled = true;
+
+                _heldRigidbody.isKinematic = false;
+            }
+
             // Re-enable gravity and rotation
             _heldRigidbody.useGravity = true;
             _heldRigidbody.freezeRotation = false;
@@ -201,12 +260,24 @@ public class ObjectPickup : MonoBehaviour
         _heldObject = null;
         _heldRigidbody = null;
         _heldCollider = null;
+        _isHoldingInventoryBox = false;
     }
 
     private void PlaceObject()
     {
         if (_heldRigidbody != null)
         {
+            if (_isHoldingInventoryBox)
+            {
+                // Unparent and re-enable physics for inventory box
+                _heldObject.transform.SetParent(null);
+
+                if (_heldCollider != null)
+                    _heldCollider.enabled = true;
+
+                _heldRigidbody.isKinematic = false;
+            }
+
             // Re-enable gravity and rotation
             _heldRigidbody.useGravity = true;
             _heldRigidbody.freezeRotation = false;
@@ -220,6 +291,7 @@ public class ObjectPickup : MonoBehaviour
         _heldObject = null;
         _heldRigidbody = null;
         _heldCollider = null;
+        _isHoldingInventoryBox = false;
     }
 
     private void DetectPlaceable()
@@ -311,5 +383,11 @@ public class ObjectPickup : MonoBehaviour
         {
             DropObject();
         }
+    }
+
+    // Check if currently holding an InventoryBox
+    public bool IsHoldingInventoryBox()
+    {
+        return _heldObject != null && _heldObject.GetComponent<InventoryBox>() != null;
     }
 }
