@@ -179,11 +179,12 @@ public class ObjectPickup : MonoBehaviour
 
         if (_isHoldingInventoryBox)
         {
-            // Fixed position: Make kinematic and parent to camera
-            _heldRigidbody.isKinematic = true;
-            _heldRigidbody.useGravity = false;
+            // Fixed position: Clear velocity first, THEN make kinematic
+            // (Can't set velocity on kinematic bodies)
             _heldRigidbody.linearVelocity = Vector3.zero;
             _heldRigidbody.angularVelocity = Vector3.zero;
+            _heldRigidbody.useGravity = false;
+            _heldRigidbody.isKinematic = true;
 
             // Disable collider to prevent blocking view
             if (_heldCollider != null)

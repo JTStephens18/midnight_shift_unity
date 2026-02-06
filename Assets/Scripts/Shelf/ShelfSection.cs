@@ -145,6 +145,40 @@ public class ShelfSection : MonoBehaviour, IPlaceable
         return null;
     }
 
+    /// <summary>
+    /// Returns a list of all missing items across all slots on this shelf.
+    /// Each entry is a category that a slot needs, repeated for each empty position.
+    /// </summary>
+    public List<ItemCategory> GetMissingItems()
+    {
+        List<ItemCategory> missingItems = new List<ItemCategory>();
+
+        foreach (ShelfSlot slot in slots)
+        {
+            // Skip slots without a category filter
+            if (slot.AcceptedCategory == null) continue;
+
+            // Calculate how many items this slot is missing
+            int emptySpaces = slot.MaxItems - slot.CurrentItemCount;
+
+            // Add the category once for each empty space
+            for (int i = 0; i < emptySpaces; i++)
+            {
+                missingItems.Add(slot.AcceptedCategory);
+            }
+        }
+
+        return missingItems;
+    }
+
+    /// <summary>
+    /// Returns a list of all slots on this shelf section.
+    /// </summary>
+    public List<ShelfSlot> GetSlots()
+    {
+        return slots;
+    }
+
     #endregion
 
     private void PlaySound(AudioClip clip)

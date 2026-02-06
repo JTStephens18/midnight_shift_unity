@@ -1,7 +1,8 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Manages the box-to-shelf item placement workflow.
+/// Manages the box-to-shelf item placement workflow with proximity-based shelf detection.
 /// Attach to the player or camera object alongside ObjectPickup.
 /// </summary>
 public class ItemPlacementManager : MonoBehaviour
@@ -10,6 +11,13 @@ public class ItemPlacementManager : MonoBehaviour
 
     [Header("References")]
     [SerializeField] private ObjectPickup objectPickup;
+
+    [Header("Proximity Detection")]
+    [Tooltip("Range to detect nearby shelf sections.")]
+    [SerializeField] private float shelfDetectionRange = 3f;
+
+    [Tooltip("Layer mask for shelf detection.")]
+    [SerializeField] private LayerMask shelfLayerMask = ~0;
 
     [Header("Ghost Preview")]
     [Tooltip("Material to apply to ghost preview objects (should be semi-transparent).")]
@@ -22,6 +30,7 @@ public class ItemPlacementManager : MonoBehaviour
     [SerializeField] private string equipBoxPrompt = "Equip box to restock";
     [SerializeField] private string emptyBoxPrompt = "Box is empty";
     [SerializeField] private string slotFullPrompt = "Slot full";
+    [SerializeField] private string categoryMismatchPrompt = "Wrong item type";
 
     [Header("Debug")]
     [SerializeField] private bool logStateChanges = false;
@@ -33,9 +42,14 @@ public class ItemPlacementManager : MonoBehaviour
 
     // Cached references
     private InventoryBox _activeBox;
+    private ShelfSection _nearbyShelf;
     private ShelfSlot _targetSlot;
     private GameObject _ghostPreviewInstance;
     private Camera _playerCamera;
+
+    // Random selection tracking
+    private List<ItemCategory> _currentMissingItems = new List<ItemCategory>();
+    private ItemCategory _randomlySelectedCategory;
 
     // Singleton for easy access
     public static ItemPlacementManager Instance { get; private set; }
@@ -70,63 +84,133 @@ public class ItemPlacementManager : MonoBehaviour
         if (_activeBox == null)
         {
             SetState(PlacementState.Idle, equipBoxPrompt);
-            ClearGhostPreview();
-            _targetSlot = null;
-            CurrentlySelectedCategory = null;
+            ClearProximityState();
             return;
         }
 
-        // Check if looking at a shelf slot
+        // Detect nearby shelf sections
+        ShelfSection newNearbyShelf = DetectNearbyShelfSection();
+
+        // If shelf changed, recalculate missing items and select random
+        if (newNearbyShelf != _nearbyShelf)
+        {
+            _nearbyShelf = newNearbyShelf;
+            OnShelfProximityChanged();
+        }
+
+        // If no nearby shelf while holding box
+        if (_nearbyShelf == null)
+        {
+            SetState(PlacementState.Idle, string.Empty);
+            ClearGhostPreview();
+            _targetSlot = null;
+            return;
+        }
+
+        // Check if looking at a specific slot on the nearby shelf
         _targetSlot = GetTargetedShelfSlot();
 
         if (_targetSlot == null)
         {
-            SetState(PlacementState.Idle, string.Empty);
+            // Near shelf but not aiming at a slot - show what item is selected
+            if (_randomlySelectedCategory != null)
+            {
+                SetState(PlacementState.Idle, $"Aim at slot to place: {_randomlySelectedCategory.name}");
+            }
+            else
+            {
+                SetState(PlacementState.Disabled, "Shelf is fully stocked");
+            }
             ClearGhostPreview();
-            CurrentlySelectedCategory = null;
             return;
         }
 
-        // Phase I: Validation
-        ItemCategory neededCategory = _targetSlot.AcceptedCategory;
+        // Phase I: Validate the targeted slot
+        ItemCategory slotCategory = _targetSlot.AcceptedCategory;
 
         // Check if slot is full
         if (_targetSlot.IsOccupied)
         {
             SetState(PlacementState.Disabled, slotFullPrompt);
             ClearGhostPreview();
-            CurrentlySelectedCategory = null;
             return;
         }
 
-        // Check if box has stock (if category is specified)
-        if (neededCategory != null && !_activeBox.HasStock(neededCategory))
+        // Check if the randomly selected item matches this slot's category
+        if (slotCategory != null && _randomlySelectedCategory != null && slotCategory != _randomlySelectedCategory)
         {
-            SetState(PlacementState.Disabled, $"Out of {neededCategory.name} items");
+            SetState(PlacementState.Disabled, $"{categoryMismatchPrompt} - needs {slotCategory.name}");
             ClearGhostPreview();
-            CurrentlySelectedCategory = null;
             return;
         }
 
-        // If no category specified, check if box has any stock
-        if (neededCategory == null && !_activeBox.HasAnyStock())
+        // Check if box has stock for this slot's category
+        ItemCategory categoryToPlace = slotCategory ?? _randomlySelectedCategory;
+        if (categoryToPlace != null && !_activeBox.HasStock(categoryToPlace))
+        {
+            SetState(PlacementState.Disabled, $"Out of {categoryToPlace.name} items");
+            ClearGhostPreview();
+            return;
+        }
+
+        // If no category determined, check for any stock
+        if (categoryToPlace == null && !_activeBox.HasAnyStock())
         {
             SetState(PlacementState.Disabled, emptyBoxPrompt);
             ClearGhostPreview();
-            CurrentlySelectedCategory = null;
             return;
         }
 
         // Phase II: Ready for placement
-        CurrentlySelectedCategory = neededCategory;
+        CurrentlySelectedCategory = categoryToPlace;
 
         int currentCount = _targetSlot.CurrentItemCount;
         int maxCount = _targetSlot.MaxItems;
-        string categoryName = neededCategory != null ? neededCategory.name : "Item";
+        string categoryName = categoryToPlace != null ? categoryToPlace.name : "Item";
         string prompt = $"Press E to Place {categoryName} ({currentCount + 1}/{maxCount})";
 
         SetState(PlacementState.Ready, prompt);
         UpdateGhostPreview();
+    }
+
+    /// <summary>
+    /// Called when the player enters/exits proximity of a shelf section.
+    /// Recalculates missing items and randomly selects one.
+    /// </summary>
+    private void OnShelfProximityChanged()
+    {
+        _currentMissingItems.Clear();
+        _randomlySelectedCategory = null;
+        CurrentlySelectedCategory = null;
+
+        if (_nearbyShelf == null || _activeBox == null) return;
+
+        // Get all missing items from the shelf
+        List<ItemCategory> allMissing = _nearbyShelf.GetMissingItems();
+
+        // Filter to only items the box has in stock
+        foreach (ItemCategory category in allMissing)
+        {
+            if (_activeBox.HasStock(category))
+            {
+                _currentMissingItems.Add(category);
+            }
+        }
+
+        // Randomly select one item to place
+        if (_currentMissingItems.Count > 0)
+        {
+            int randomIndex = Random.Range(0, _currentMissingItems.Count);
+            _randomlySelectedCategory = _currentMissingItems[randomIndex];
+
+            if (logStateChanges)
+                Debug.Log($"[ItemPlacementManager] Near shelf '{_nearbyShelf.name}'. Missing {_currentMissingItems.Count} items. Selected: {_randomlySelectedCategory.name}");
+        }
+        else
+        {
+            if (logStateChanges)
+                Debug.Log($"[ItemPlacementManager] Near shelf '{_nearbyShelf.name}' but no placeable items (shelf full or box empty).");
+        }
     }
 
     /// <summary>
@@ -141,12 +225,10 @@ public class ItemPlacementManager : MonoBehaviour
         // Determine category to use
         ItemCategory category = CurrentlySelectedCategory;
 
-        // If slot accepts any category, use first available from box
         if (category == null)
         {
-            var available = _activeBox.GetAvailableCategories();
-            if (available.Count == 0) return false;
-            category = available[0];
+            Debug.LogWarning("[ItemPlacementManager] No category selected for placement");
+            return false;
         }
 
         // Get prefab for this category
@@ -166,11 +248,14 @@ public class ItemPlacementManager : MonoBehaviour
             // Decrement box inventory
             _activeBox.TryDecrement(category);
 
-            // Clear ghost preview (will be recreated next frame if needed)
+            // Clear ghost preview
             ClearGhostPreview();
 
             if (logStateChanges)
                 Debug.Log($"[ItemPlacementManager] Placed {category.name} on {_targetSlot.gameObject.name}");
+
+            // Re-evaluate missing items for this shelf
+            OnShelfProximityChanged();
 
             return true;
         }
@@ -203,6 +288,14 @@ public class ItemPlacementManager : MonoBehaviour
         return _activeBox != null;
     }
 
+    /// <summary>
+    /// Returns the currently randomly selected item category to place.
+    /// </summary>
+    public ItemCategory GetSelectedCategory()
+    {
+        return _randomlySelectedCategory;
+    }
+
     private InventoryBox GetHeldInventoryBox()
     {
         if (objectPickup == null) return null;
@@ -213,17 +306,60 @@ public class ItemPlacementManager : MonoBehaviour
         return heldObject.GetComponent<InventoryBox>();
     }
 
+    private ShelfSection DetectNearbyShelfSection()
+    {
+        if (_playerCamera == null) return null;
+
+        // Use overlap sphere to find nearby shelf sections
+        Collider[] colliders = Physics.OverlapSphere(
+            _playerCamera.transform.position,
+            shelfDetectionRange,
+            shelfLayerMask
+        );
+
+        ShelfSection nearestShelf = null;
+        float nearestDistance = float.MaxValue;
+
+        foreach (Collider col in colliders)
+        {
+            ShelfSection section = col.GetComponent<ShelfSection>();
+            if (section == null)
+                section = col.GetComponentInParent<ShelfSection>();
+
+            if (section != null)
+            {
+                float distance = Vector3.Distance(_playerCamera.transform.position, section.transform.position);
+                if (distance < nearestDistance)
+                {
+                    nearestDistance = distance;
+                    nearestShelf = section;
+                }
+            }
+        }
+
+        return nearestShelf;
+    }
+
     private ShelfSlot GetTargetedShelfSlot()
     {
         if (_playerCamera == null) return null;
 
         Ray ray = new Ray(_playerCamera.transform.position, _playerCamera.transform.forward);
 
-        if (Physics.Raycast(ray, out RaycastHit hit, 3f))
+        if (Physics.Raycast(ray, out RaycastHit hit, shelfDetectionRange))
         {
             ShelfSlot slot = hit.collider.GetComponent<ShelfSlot>();
             if (slot == null)
                 slot = hit.collider.GetComponentInParent<ShelfSlot>();
+
+            // Only return slots that belong to the nearby shelf
+            if (slot != null && _nearbyShelf != null)
+            {
+                // Verify the slot is part of the nearby shelf
+                if (_nearbyShelf.GetSlots().Contains(slot))
+                    return slot;
+            }
+
             return slot;
         }
         return null;
@@ -240,19 +376,22 @@ public class ItemPlacementManager : MonoBehaviour
         CurrentPrompt = prompt;
     }
 
+    private void ClearProximityState()
+    {
+        ClearGhostPreview();
+        _nearbyShelf = null;
+        _targetSlot = null;
+        _currentMissingItems.Clear();
+        _randomlySelectedCategory = null;
+        CurrentlySelectedCategory = null;
+    }
+
     private void UpdateGhostPreview()
     {
         if (_activeBox == null || _targetSlot == null) return;
 
         ItemCategory category = CurrentlySelectedCategory;
-
-        // If no specific category, use first available
-        if (category == null)
-        {
-            var available = _activeBox.GetAvailableCategories();
-            if (available.Count == 0) return;
-            category = available[0];
-        }
+        if (category == null) return;
 
         GameObject prefab = _activeBox.GetItemPrefab(category);
         if (prefab == null) return;
@@ -322,6 +461,18 @@ public class ItemPlacementManager : MonoBehaviour
 
     private void OnDisable()
     {
-        ClearGhostPreview();
+        ClearProximityState();
     }
+
+#if UNITY_EDITOR
+    private void OnDrawGizmosSelected()
+    {
+        // Draw shelf detection range
+        if (_playerCamera != null)
+        {
+            Gizmos.color = new Color(0.5f, 1f, 0.5f, 0.3f);
+            Gizmos.DrawWireSphere(_playerCamera.transform.position, shelfDetectionRange);
+        }
+    }
+#endif
 }
