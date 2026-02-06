@@ -1,9 +1,25 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Represents a single slot on a shelf where an item can be placed.
-/// Attach to empty child GameObjects positioned at desired item locations.
-/// Each slot has its own BoxCollider for precise targeting.
+/// Defines placement position and rotation for a single item in a slot.
+/// </summary>
+[System.Serializable]
+public class ItemPlacement
+{
+    [Tooltip("Local position offset for this item.")]
+    public Vector3 positionOffset = Vector3.zero;
+
+    [Tooltip("Local rotation for this item (euler angles).")]
+    public Vector3 rotationOffset = Vector3.zero;
+
+    [HideInInspector]
+    public GameObject placedItem;
+}
+
+/// <summary>
+/// Represents a single slot on a shelf where items can be placed.
+/// Supports multiple items per slot with individual placement positions.
 /// </summary>
 [RequireComponent(typeof(BoxCollider))]
 public class ShelfSlot : MonoBehaviour, IPlaceable
@@ -24,23 +40,22 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
 
     public bool RequireHeldItem => requireHeldItem;
 
-    [Header("Placement")]
-    [Tooltip("Local position offset for placed items.")]
-    [SerializeField] private Vector3 positionOffset = Vector3.zero;
-
-    [Tooltip("Local rotation for placed items (euler angles).")]
-    [SerializeField] private Vector3 rotationOffset = Vector3.zero;
+    [Header("Item Placements")]
+    [Tooltip("Define positions for each item that can be placed in this slot. Array size = max items.")]
+    [SerializeField] private List<ItemPlacement> itemPlacements = new List<ItemPlacement>() { new ItemPlacement() };
 
     [Header("State")]
-    [SerializeField] private bool isOccupied = false;
+    [SerializeField] private int currentItemCount = 0;
 
-    private GameObject _heldItem;
     private BoxCollider _collider;
     private LineRenderer _highlightRenderer;
     private bool _isHighlighted = false;
 
-    public bool IsOccupied => isOccupied;
-    public GameObject HeldItem => _heldItem;
+    public bool IsOccupied => currentItemCount >= itemPlacements.Count;
+    public bool HasItems => currentItemCount > 0;
+    public int CurrentItemCount => currentItemCount;
+    public int MaxItems => itemPlacements.Count;
+    public List<ItemPlacement> ItemPlacements => itemPlacements;
     public Vector3 Position => transform.position;
     public Quaternion Rotation => transform.rotation;
     public Vector3 SlotSize => slotSize;
@@ -221,35 +236,38 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
 
     public bool CanPlaceItem(GameObject item)
     {
-        return !isOccupied;
+        return !IsOccupied;
     }
 
     public bool TryPlaceItem(GameObject item)
     {
-        if (isOccupied) return false;
+        if (IsOccupied) return false;
         PlaceItem(item);
         return true;
     }
 
     public string GetPlacementPrompt()
     {
-        return isOccupied ? "Slot Occupied" : "Press E to Place";
+        return IsOccupied ? "Slot Full" : $"Press E to Place ({currentItemCount}/{itemPlacements.Count})";
     }
 
     #endregion
 
     /// <summary>
-    /// Places an item in this slot with a fixed position and rotation.
+    /// Places an item in the next available position in this slot.
     /// </summary>
     public void PlaceItem(GameObject item)
     {
-        _heldItem = item;
-        isOccupied = true;
+        if (currentItemCount >= itemPlacements.Count) return;
+
+        ItemPlacement placement = itemPlacements[currentItemCount];
+        placement.placedItem = item;
+        currentItemCount++;
 
         // Parent first, then set local transforms for precise control
         item.transform.SetParent(transform);
-        item.transform.localPosition = positionOffset;
-        item.transform.localRotation = Quaternion.Euler(rotationOffset);
+        item.transform.localPosition = placement.positionOffset;
+        item.transform.localRotation = Quaternion.Euler(placement.rotationOffset);
 
         // Configure physics for completely static placement
         Rigidbody rb = item.GetComponent<Rigidbody>();
@@ -262,19 +280,22 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
             rb.constraints = RigidbodyConstraints.FreezeAll;
         }
 
-        Debug.Log($"[ShelfSlot] Placed '{item.name}' in slot '{gameObject.name}' at local pos {positionOffset}, rot {rotationOffset}");
+        Debug.Log($"[ShelfSlot] Placed '{item.name}' in slot '{gameObject.name}' position {currentItemCount}/{itemPlacements.Count}");
     }
 
     /// <summary>
-    /// Removes and returns the item from this slot.
+    /// Removes and returns the most recently placed item from this slot.
     /// </summary>
     public GameObject RemoveItem()
     {
-        if (_heldItem == null) return null;
+        if (currentItemCount <= 0) return null;
 
-        GameObject item = _heldItem;
-        _heldItem = null;
-        isOccupied = false;
+        currentItemCount--;
+        ItemPlacement placement = itemPlacements[currentItemCount];
+        GameObject item = placement.placedItem;
+        placement.placedItem = null;
+
+        if (item == null) return null;
 
         // Unparent the item
         item.transform.SetParent(null);
@@ -292,12 +313,15 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
     }
 
     /// <summary>
-    /// Clears the slot state (e.g., if item was destroyed).
+    /// Clears all items from the slot (e.g., if items were destroyed).
     /// </summary>
     public void Clear()
     {
-        _heldItem = null;
-        isOccupied = false;
+        for (int i = 0; i < itemPlacements.Count; i++)
+        {
+            itemPlacements[i].placedItem = null;
+        }
+        currentItemCount = 0;
     }
 
 #if UNITY_EDITOR
@@ -309,7 +333,7 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
         Vector3 center = col != null ? col.center : Vector3.zero;
 
         // Always draw a subtle wireframe
-        Gizmos.color = isOccupied ? new Color(1f, 0.3f, 0.3f, 0.5f) : new Color(0.3f, 1f, 0.3f, 0.5f);
+        Gizmos.color = IsOccupied ? new Color(1f, 0.3f, 0.3f, 0.5f) : new Color(0.3f, 1f, 0.3f, 0.5f);
         Gizmos.matrix = Matrix4x4.TRS(transform.position, transform.rotation, transform.lossyScale);
         Gizmos.DrawWireCube(center, size);
     }
@@ -324,11 +348,11 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
         Gizmos.matrix = Matrix4x4.TRS(transform.position, transform.rotation, transform.lossyScale);
 
         // Draw solid box when selected
-        Gizmos.color = isOccupied ? new Color(1f, 0.3f, 0.3f, 0.3f) : new Color(0.3f, 1f, 0.3f, 0.3f);
+        Gizmos.color = IsOccupied ? new Color(1f, 0.3f, 0.3f, 0.3f) : new Color(0.3f, 1f, 0.3f, 0.3f);
         Gizmos.DrawCube(center, size);
 
         // Brighter wireframe when selected
-        Gizmos.color = isOccupied ? Color.red : Color.green;
+        Gizmos.color = IsOccupied ? Color.red : Color.green;
         Gizmos.DrawWireCube(center, size);
     }
 #endif

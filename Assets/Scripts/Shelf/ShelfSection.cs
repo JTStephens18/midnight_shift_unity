@@ -109,7 +109,7 @@ public class ShelfSection : MonoBehaviour, IPlaceable
         int count = 0;
         foreach (ShelfSlot slot in slots)
         {
-            if (slot.IsOccupied) count++;
+            if (slot.HasItems) count++;
         }
         return count;
     }
@@ -122,8 +122,11 @@ public class ShelfSection : MonoBehaviour, IPlaceable
         List<GameObject> items = new List<GameObject>();
         foreach (ShelfSlot slot in slots)
         {
-            if (slot.HeldItem != null)
-                items.Add(slot.HeldItem);
+            foreach (ItemPlacement placement in slot.ItemPlacements)
+            {
+                if (placement.placedItem != null)
+                    items.Add(placement.placedItem);
+            }
         }
         return items;
     }
