@@ -70,6 +70,15 @@ public class ObjectPickup : MonoBehaviour
                 // Place on shelf instead of dropping
                 PlaceOnShelf();
             }
+            else if (_currentPlaceable != null && !_currentPlaceable.CanPlaceItem(_heldObject))
+            {
+                // Trying to place on a slot that rejects the item - shake feedback
+                if (MouseLook.Instance != null)
+                {
+                    MouseLook.Instance.Shake();
+                }
+                Debug.Log("[ObjectPickup] Cannot place item here - wrong category or slot full");
+            }
             else
             {
                 DropObject();

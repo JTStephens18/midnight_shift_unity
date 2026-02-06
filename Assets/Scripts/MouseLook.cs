@@ -23,6 +23,10 @@ public class MouseLook : MonoBehaviour
     [SerializeField] private float minPitch = -90f;
     [SerializeField] private float maxPitch = 90f;
 
+    [Header("Screen Shake")]
+    [SerializeField] private float defaultShakeIntensity = 0.15f;
+    [SerializeField] private float defaultShakeDuration = 0.2f;
+
     [Header("References")]
     [SerializeField] private Transform playerBody;
 
@@ -30,6 +34,19 @@ public class MouseLook : MonoBehaviour
     private float _xRotation = 0f;
     private Vector2 _currentVelocity;
     private Vector2 _smoothedInput;
+
+    // Shake state
+    private float _shakeTimeRemaining = 0f;
+    private float _shakeIntensity = 0f;
+    private Vector3 _shakeOffset = Vector3.zero;
+
+    // Singleton for easy access
+    public static MouseLook Instance { get; private set; }
+
+    void Awake()
+    {
+        Instance = this;
+    }
 
     void Start()
     {
@@ -40,6 +57,7 @@ public class MouseLook : MonoBehaviour
     void Update()
     {
         HandleLook();
+        HandleShake();
     }
 
     private void HandleLook()
@@ -88,9 +106,41 @@ public class MouseLook : MonoBehaviour
         _xRotation += verticalInput;
         _xRotation = Mathf.Clamp(_xRotation, minPitch, maxPitch);
 
-        // 6. Apply rotations
-        transform.localRotation = Quaternion.Euler(_xRotation, 0f, 0f);
+        // 6. Apply rotations (with shake offset)
+        transform.localRotation = Quaternion.Euler(_xRotation + _shakeOffset.x, _shakeOffset.y, _shakeOffset.z);
         playerBody.Rotate(Vector3.up * mouseX);
+    }
+
+    private void HandleShake()
+    {
+        if (_shakeTimeRemaining > 0)
+        {
+            _shakeTimeRemaining -= Time.deltaTime;
+
+            // Decreasing intensity over time
+            float progress = _shakeTimeRemaining / defaultShakeDuration;
+            float currentIntensity = _shakeIntensity * progress;
+
+            // Random shake offset
+            _shakeOffset = new Vector3(
+                Random.Range(-1f, 1f) * currentIntensity,
+                Random.Range(-1f, 1f) * currentIntensity,
+                Random.Range(-0.5f, 0.5f) * currentIntensity
+            );
+        }
+        else
+        {
+            _shakeOffset = Vector3.zero;
+        }
+    }
+
+    /// <summary>
+    /// Triggers a screen shake effect.
+    /// </summary>
+    public void Shake(float intensity = -1f, float duration = -1f)
+    {
+        _shakeIntensity = intensity > 0 ? intensity : defaultShakeIntensity;
+        _shakeTimeRemaining = duration > 0 ? duration : defaultShakeDuration;
     }
 
     // Public methods to adjust settings at runtime

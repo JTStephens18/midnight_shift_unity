@@ -44,6 +44,12 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
     [Tooltip("Define positions for each item that can be placed in this slot. Array size = max items.")]
     [SerializeField] private List<ItemPlacement> itemPlacements = new List<ItemPlacement>() { new ItemPlacement() };
 
+    [Header("Item Filtering")]
+    [Tooltip("If set, only items with this category can be placed. Leave empty to accept any item.")]
+    [SerializeField] private ItemCategory acceptedCategory;
+
+    public ItemCategory AcceptedCategory => acceptedCategory;
+
     [Header("State")]
     [SerializeField] private int currentItemCount = 0;
 
@@ -236,19 +242,34 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
 
     public bool CanPlaceItem(GameObject item)
     {
-        return !IsOccupied;
+        if (IsOccupied) return false;
+
+        // Check category filter if set
+        if (acceptedCategory != null && item != null)
+        {
+            InteractableItem interactable = item.GetComponent<InteractableItem>();
+            if (interactable == null || interactable.ItemCategory != acceptedCategory)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public bool TryPlaceItem(GameObject item)
     {
-        if (IsOccupied) return false;
+        if (!CanPlaceItem(item)) return false;
         PlaceItem(item);
         return true;
     }
 
     public string GetPlacementPrompt()
     {
-        return IsOccupied ? "Slot Full" : $"Press E to Place ({currentItemCount}/{itemPlacements.Count})";
+        if (IsOccupied) return "Slot Full";
+        return acceptedCategory != null
+            ? $"Press E to Place [{acceptedCategory.name}] ({currentItemCount}/{itemPlacements.Count})"
+            : $"Press E to Place ({currentItemCount}/{itemPlacements.Count})";
     }
 
     #endregion
