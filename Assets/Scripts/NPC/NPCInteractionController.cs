@@ -58,10 +58,11 @@ public class NPCInteractionController : MonoBehaviour
     private IInteractable _currentTarget;
     private GameObject _currentTargetObject;
     private List<InteractableItem> _heldItems = new List<InteractableItem>();
+    private Dictionary<GameObject, float> _unreachableItems = new Dictionary<GameObject, float>(); // Items we couldn't path to
     private float _scanTimer;
     private float _pauseTimer;
     private bool _hasStartedMoving;
-    private int _counterPlaceIndex; // Tracks which item we're placing from the batch
+    private const float UNREACHABLE_RETRY_TIME = 10f; // Seconds before retrying unreachable items
 
     // States for the interaction flow
     private enum NPCState { Idle, MovingToItem, WaitingAtItem, PickingUp, MovingToCounter, PlacingItem }
@@ -218,7 +219,6 @@ public class NPCInteractionController : MonoBehaviour
         if (shouldGoToCounter && counterSpawn != null)
         {
             Debug.Log($"[NPC] Moving to counter with {_heldItems.Count} item(s) at {counterSpawn.position}");
-            _counterPlaceIndex = 0;
             _agent.SetDestination(counterSpawn.position);
             _currentState = NPCState.MovingToCounter;
         }
@@ -341,6 +341,19 @@ public class NPCInteractionController : MonoBehaviour
                     continue;
                 }
 
+                // Skip items we couldn't path to recently (clear expired entries)
+                if (_unreachableItems.ContainsKey(col.gameObject))
+                {
+                    if (Time.time - _unreachableItems[col.gameObject] < UNREACHABLE_RETRY_TIME)
+                    {
+                        continue; // Still in timeout
+                    }
+                    else
+                    {
+                        _unreachableItems.Remove(col.gameObject); // Timeout expired, try again
+                    }
+                }
+
                 // Check category filter (empty list = accept all)
                 if (item != null && wantedCategories.Count > 0)
                 {
@@ -376,18 +389,44 @@ public class NPCInteractionController : MonoBehaviour
 
         Vector3 targetPosition = target.GetInteractionPoint();
 
-        // Check if we can path to the target
+        // Try to find a valid NavMesh position near the item
+        // This allows items on shelves to be reachable by walking near them
+        NavMeshHit navHit;
+        Vector3 destinationPosition = targetPosition;
+
+        // First check if the exact position is on NavMesh
+        if (!NavMesh.SamplePosition(targetPosition, out navHit, 0.5f, NavMesh.AllAreas))
+        {
+            // Item isn't on NavMesh, find nearest walkable point (within reachDistance)
+            if (NavMesh.SamplePosition(targetPosition, out navHit, reachDistance + 1f, NavMesh.AllAreas))
+            {
+                destinationPosition = navHit.position;
+                Debug.Log($"[NPC] Item {targetObject.name} not on NavMesh, navigating to nearby point.");
+            }
+            else
+            {
+                // No NavMesh point found nearby at all
+                _unreachableItems[targetObject] = Time.time;
+                Debug.LogWarning($"[NPC] Cannot find NavMesh near {targetObject.name}. Will retry in {UNREACHABLE_RETRY_TIME}s.");
+                CancelCurrentAction();
+                return;
+            }
+        }
+
+        // Check if we can path to the destination
         NavMeshPath path = new NavMeshPath();
-        bool pathValid = _agent.CalculatePath(targetPosition, path);
+        bool pathValid = _agent.CalculatePath(destinationPosition, path);
 
         if (!pathValid || path.status != NavMeshPathStatus.PathComplete)
         {
-            Debug.LogError($"[NPCInteractionController] Cannot path to {targetObject.name}! NavMesh status: {path.status}.");
+            // Mark as unreachable so we don't spam this error
+            _unreachableItems[targetObject] = Time.time;
+            Debug.LogWarning($"[NPC] Cannot path to {targetObject.name} (NavMesh status: {path.status}). Will retry in {UNREACHABLE_RETRY_TIME}s.");
             CancelCurrentAction();
             return;
         }
 
-        _agent.SetDestination(targetPosition);
+        _agent.SetDestination(destinationPosition);
         _currentState = NPCState.MovingToItem;
     }
 
@@ -440,7 +479,6 @@ public class NPCInteractionController : MonoBehaviour
             if (counterSpawn != null)
             {
                 Debug.Log($"[NPC] Stopping collection, delivering {_heldItems.Count} item(s) to counter");
-                _counterPlaceIndex = 0;
                 _agent.SetDestination(counterSpawn.position);
                 _currentState = NPCState.MovingToCounter;
             }
