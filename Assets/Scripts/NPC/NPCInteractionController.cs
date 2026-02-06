@@ -20,6 +20,9 @@ public class NPCInteractionController : MonoBehaviour
     [Tooltip("Distance at which the NPC can reach and pick up an item.")]
     [SerializeField] private float reachDistance = 0.75f;
 
+    [Tooltip("Maximum distance to search for NavMesh when items are on shelves. Should be larger than tallest shelf height.")]
+    [SerializeField] private float shelfReachDistance = 5f;
+
     [Tooltip("The NPC's hand transform where picked up items will be parented.")]
     [SerializeField] private Transform handBone;
 
@@ -445,17 +448,39 @@ public class NPCInteractionController : MonoBehaviour
         // First check if the exact position is on NavMesh
         if (!NavMesh.SamplePosition(targetPosition, out navHit, 0.5f, NavMesh.AllAreas))
         {
-            // Item isn't on NavMesh, find nearest walkable point (within reachDistance)
-            if (NavMesh.SamplePosition(targetPosition, out navHit, reachDistance + 1f, NavMesh.AllAreas))
+            // Item isn't on NavMesh (likely on a shelf)
+            // Try progressively larger search radii to find the floor beneath/near the item
+            bool foundNavMesh = false;
+            float[] searchRadii = { 2f, shelfReachDistance, shelfReachDistance * 2f };
+
+            foreach (float radius in searchRadii)
             {
-                destinationPosition = navHit.position;
-                Debug.Log($"[NPC] Item {targetObject.name} not on NavMesh, navigating to nearby point.");
+                if (NavMesh.SamplePosition(targetPosition, out navHit, radius, NavMesh.AllAreas))
+                {
+                    destinationPosition = navHit.position;
+                    Debug.Log($"[NPC] Item {targetObject.name} found NavMesh point at radius {radius}m");
+                    foundNavMesh = true;
+                    break;
+                }
             }
-            else
+
+            // Also try searching directly below the item (for tall shelves)
+            if (!foundNavMesh)
+            {
+                Vector3 belowItem = new Vector3(targetPosition.x, 0f, targetPosition.z);
+                if (NavMesh.SamplePosition(belowItem, out navHit, 3f, NavMesh.AllAreas))
+                {
+                    destinationPosition = navHit.position;
+                    Debug.Log($"[NPC] Item {targetObject.name} found NavMesh point directly below");
+                    foundNavMesh = true;
+                }
+            }
+
+            if (!foundNavMesh)
             {
                 // No NavMesh point found nearby at all
                 _unreachableItems[targetObject] = Time.time;
-                Debug.LogWarning($"[NPC] Cannot find NavMesh near {targetObject.name}. Will retry in {UNREACHABLE_RETRY_TIME}s.");
+                Debug.LogWarning($"[NPC] Cannot find NavMesh near {targetObject.name} (tried up to {shelfReachDistance * 2f}m). Will retry in {UNREACHABLE_RETRY_TIME}s.");
                 CancelCurrentAction();
                 return;
             }
