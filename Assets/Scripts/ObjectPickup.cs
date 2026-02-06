@@ -32,6 +32,7 @@ public class ObjectPickup : MonoBehaviour
     private Rigidbody _heldRigidbody;
     private Collider _heldCollider;
     private float _currentHoldDistance;
+    private IPlaceable _currentPlaceable;
 
     void Start()
     {
@@ -55,11 +56,19 @@ public class ObjectPickup : MonoBehaviour
 
     void Update()
     {
+        // Always detect placeable targets for highlight (some slots show even without held item)
+        DetectPlaceable();
+
         if (Input.GetKeyDown(interactKey))
         {
             if (_heldObject == null)
             {
                 TryPickup();
+            }
+            else if (_currentPlaceable != null && _currentPlaceable.CanPlaceItem(_heldObject))
+            {
+                // Place on shelf instead of dropping
+                PlaceOnShelf();
             }
             else
             {
@@ -202,6 +211,88 @@ public class ObjectPickup : MonoBehaviour
         _heldObject = null;
         _heldRigidbody = null;
         _heldCollider = null;
+    }
+
+    private void DetectPlaceable()
+    {
+        Ray ray = new Ray(_playerCamera.transform.position, _playerCamera.transform.forward);
+
+        IPlaceable newPlaceable = null;
+
+        if (Physics.Raycast(ray, out RaycastHit hit, pickupRange, pickupLayerMask))
+        {
+            newPlaceable = hit.collider.GetComponent<IPlaceable>();
+            if (newPlaceable == null)
+                newPlaceable = hit.collider.GetComponentInParent<IPlaceable>();
+
+            // Debug: Show what we're hitting
+            if (newPlaceable != null)
+            {
+                bool canPlace = newPlaceable.CanPlaceItem(_heldObject);
+                string type = newPlaceable is ShelfSlot ? "ShelfSlot" : "ShelfSection";
+                Debug.Log($"[ObjectPickup] Looking at {type} '{hit.collider.gameObject.name}'. CanPlace: {canPlace}");
+            }
+            else
+            {
+                Debug.Log($"[ObjectPickup] Raycast hit '{hit.collider.gameObject.name}' - no IPlaceable found");
+            }
+        }
+
+        // Handle highlight changes
+        if (newPlaceable != _currentPlaceable)
+        {
+            // Hide highlight on previous slot
+            if (_currentPlaceable is ShelfSlot previousSlot)
+            {
+                previousSlot.HideHighlight();
+            }
+
+            // Show highlight on new slot (respecting RequireHeldItem setting)
+            if (newPlaceable is ShelfSlot newSlot)
+            {
+                bool shouldShowHighlight = !newSlot.RequireHeldItem || _heldObject != null;
+                if (shouldShowHighlight)
+                {
+                    newSlot.ShowHighlight();
+                }
+            }
+        }
+
+        _currentPlaceable = newPlaceable;
+    }
+
+    private void PlaceOnShelf()
+    {
+        if (_currentPlaceable == null || _heldObject == null) return;
+
+        // Prepare the object for placement
+        if (_heldRigidbody != null)
+        {
+            _heldRigidbody.linearVelocity = Vector3.zero;
+            _heldRigidbody.angularVelocity = Vector3.zero;
+        }
+
+        // Place the item
+        if (_currentPlaceable.TryPlaceItem(_heldObject))
+        {
+            // Clear held references
+            _heldObject = null;
+            _heldRigidbody = null;
+            _heldCollider = null;
+            _currentPlaceable = null;
+        }
+    }
+
+    // Public method to check if currently looking at a placeable
+    public bool IsLookingAtPlaceable()
+    {
+        return _currentPlaceable != null;
+    }
+
+    // Public method to get the current placeable's prompt
+    public string GetPlaceablePrompt()
+    {
+        return _currentPlaceable?.GetPlacementPrompt() ?? string.Empty;
     }
 
     // Public method to check if currently holding an object
