@@ -224,18 +224,6 @@ public class ObjectPickup : MonoBehaviour
             newPlaceable = hit.collider.GetComponent<IPlaceable>();
             if (newPlaceable == null)
                 newPlaceable = hit.collider.GetComponentInParent<IPlaceable>();
-
-            // Debug: Show what we're hitting
-            if (newPlaceable != null)
-            {
-                bool canPlace = newPlaceable.CanPlaceItem(_heldObject);
-                string type = newPlaceable is ShelfSlot ? "ShelfSlot" : "ShelfSection";
-                Debug.Log($"[ObjectPickup] Looking at {type} '{hit.collider.gameObject.name}'. CanPlace: {canPlace}");
-            }
-            else
-            {
-                Debug.Log($"[ObjectPickup] Raycast hit '{hit.collider.gameObject.name}' - no IPlaceable found");
-            }
         }
 
         // Handle highlight changes
