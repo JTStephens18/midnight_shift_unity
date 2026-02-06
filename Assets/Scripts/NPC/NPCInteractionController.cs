@@ -34,6 +34,13 @@ public class NPCInteractionController : MonoBehaviour
     [Tooltip("Categories of items this NPC will pick up. Leave empty to pick up any item.")]
     [SerializeField] private List<ItemCategory> wantedCategories = new List<ItemCategory>();
 
+    [Header("Shelf Slot Source")]
+    [Tooltip("If true, NPC takes items from specified shelf slots instead of scanning nearby items.")]
+    [SerializeField] private bool useShelfSlots = false;
+
+    [Tooltip("List of shelf slots the NPC is allowed to take items from.")]
+    [SerializeField] private List<ShelfSlot> allowedShelfSlots = new List<ShelfSlot>();
+
     [Header("Behavior Settings")]
     [Tooltip("Automatically scan for items at regular intervals.")]
     [SerializeField] private bool autoScan = true;
@@ -349,6 +356,7 @@ public class NPCInteractionController : MonoBehaviour
 
     /// <summary>
     /// Scans for nearby interactable items and selects the nearest one.
+    /// If useShelfSlots is enabled, takes items from allowedShelfSlots instead.
     /// </summary>
     public void ScanForItems()
     {
@@ -356,6 +364,13 @@ public class NPCInteractionController : MonoBehaviour
         if (!isCollecting) return;
         if (batchCollection && _heldItems.Count >= batchSize) return;
         if (!batchCollection && _heldItems.Count > 0) return;
+
+        // If using shelf slots, scan from allowed slots instead
+        if (useShelfSlots)
+        {
+            ScanShelfSlots();
+            return;
+        }
 
         Collider[] hitColliders = Physics.OverlapSphere(transform.position, detectionRadius, itemLayerMask);
 
@@ -427,6 +442,78 @@ public class NPCInteractionController : MonoBehaviour
         if (nearestInteractable != null)
         {
             SetTarget(nearestInteractable, nearestObject);
+        }
+    }
+
+    /// <summary>
+    /// Scans allowed shelf slots for items to pick up.
+    /// Selects the nearest slot that has items.
+    /// </summary>
+    private void ScanShelfSlots()
+    {
+        if (allowedShelfSlots.Count == 0)
+        {
+            Debug.LogWarning("[NPC] useShelfSlots is enabled but no slots are assigned!");
+            return;
+        }
+
+        float nearestDistance = float.MaxValue;
+        ShelfSlot nearestSlot = null;
+        InteractableItem nearestItem = null;
+
+        foreach (ShelfSlot slot in allowedShelfSlots)
+        {
+            if (slot == null) continue;
+            if (!slot.HasItems) continue;
+
+            // Get the first available item from this slot's placements
+            InteractableItem item = null;
+            foreach (ItemPlacement placement in slot.ItemPlacements)
+            {
+                if (placement.placedItem != null)
+                {
+                    item = placement.placedItem.GetComponent<InteractableItem>();
+                    if (item != null && !item.IsDelivered)
+                    {
+                        break;
+                    }
+                    item = null;
+                }
+            }
+
+            if (item == null) continue;
+
+            // Check category filter
+            if (wantedCategories.Count > 0)
+            {
+                if (item.ItemCategory == null || !wantedCategories.Contains(item.ItemCategory))
+                {
+                    continue;
+                }
+            }
+
+            float distance = Vector3.Distance(transform.position, slot.transform.position);
+            if (distance < nearestDistance)
+            {
+                nearestDistance = distance;
+                nearestSlot = slot;
+                nearestItem = item;
+            }
+        }
+
+        if (nearestSlot != null && nearestItem != null)
+        {
+            // Remove item from shelf slot first
+            GameObject removedItem = nearestSlot.RemoveItem();
+            if (removedItem != null)
+            {
+                IInteractable interactable = removedItem.GetComponent<IInteractable>();
+                if (interactable != null)
+                {
+                    Debug.Log($"[NPC] Taking item from shelf slot: {nearestSlot.name}");
+                    SetTarget(interactable, removedItem);
+                }
+            }
         }
     }
 
