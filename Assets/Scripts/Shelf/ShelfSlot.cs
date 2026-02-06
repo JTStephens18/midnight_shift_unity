@@ -294,10 +294,14 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
         Rigidbody rb = item.GetComponent<Rigidbody>();
         if (rb != null)
         {
-            rb.linearVelocity = Vector3.zero;
-            rb.angularVelocity = Vector3.zero;
-            rb.isKinematic = true;
+            // Clear velocity before making kinematic (can't set velocity on kinematic bodies)
+            if (!rb.isKinematic)
+            {
+                rb.linearVelocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
             rb.useGravity = false;
+            rb.isKinematic = true;
             rb.constraints = RigidbodyConstraints.FreezeAll;
         }
 
