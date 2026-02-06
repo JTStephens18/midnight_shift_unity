@@ -11,6 +11,20 @@ public class InteractableItem : MonoBehaviour, IInteractable
     [Tooltip("The point where the NPC's hand will grab. If not assigned, searches for a child named 'GrabTarget'.")]
     [SerializeField] private Transform grabTarget;
 
+    [Header("Category")]
+    [Tooltip("The category of this item (e.g., Food, Drink, Cleaning). Used by NPC filtering.")]
+    [SerializeField] private ItemCategory itemCategory;
+
+    /// <summary>
+    /// Returns the item's category for NPC filtering.
+    /// </summary>
+    public ItemCategory ItemCategory => itemCategory;
+
+    /// <summary>
+    /// Whether this item has been delivered to the counter and should not be picked up again.
+    /// </summary>
+    public bool IsDelivered { get; private set; } = false;
+
     private Rigidbody _rigidbody;
     private Collider _collider;
     private Renderer[] _renderers;
@@ -77,6 +91,9 @@ public class InteractableItem : MonoBehaviour, IInteractable
     /// </summary>
     public void PlaceAt(Vector3 position)
     {
+        // Mark as delivered so NPC won't pick it up again
+        IsDelivered = true;
+
         // Re-activate the item first
         gameObject.SetActive(true);
 

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -26,12 +27,19 @@ public class NPCInteractionController : MonoBehaviour
     [Tooltip("The spawn point on the counter where items will be placed.")]
     [SerializeField] private Transform counterSpawn;
 
+    [Header("Item Preferences")]
+    [Tooltip("Categories of items this NPC will pick up. Leave empty to pick up any item.")]
+    [SerializeField] private List<ItemCategory> wantedCategories = new List<ItemCategory>();
+
     [Header("Behavior Settings")]
     [Tooltip("Automatically scan for items at regular intervals.")]
     [SerializeField] private bool autoScan = true;
 
     [Tooltip("Time between automatic scans in seconds.")]
     [SerializeField] private float scanInterval = 1f;
+
+    [Tooltip("Time to pause at item before picking it up.")]
+    [SerializeField] private float pickupPauseTime = 0.5f;
 
     [Header("Debug")]
     [SerializeField] private bool showDebugGizmos = true;
@@ -41,10 +49,11 @@ public class NPCInteractionController : MonoBehaviour
     private GameObject _currentTargetObject;
     private InteractableItem _heldItem;
     private float _scanTimer;
+    private float _pauseTimer;
     private bool _hasStartedMoving;
 
     // States for the interaction flow
-    private enum NPCState { Idle, MovingToItem, PickingUp, MovingToCounter, PlacingItem }
+    private enum NPCState { Idle, MovingToItem, WaitingAtItem, PickingUp, MovingToCounter, PlacingItem }
     private NPCState _currentState = NPCState.Idle;
 
     private void Awake()
@@ -63,6 +72,10 @@ public class NPCInteractionController : MonoBehaviour
 
             case NPCState.MovingToItem:
                 HandleMovingToItemState();
+                break;
+
+            case NPCState.WaitingAtItem:
+                HandleWaitingAtItemState();
                 break;
 
             case NPCState.PickingUp:
@@ -119,6 +132,20 @@ public class NPCInteractionController : MonoBehaviour
         {
             Debug.Log($"[NPC] Arrived at item: {_currentTargetObject.name}");
             _hasStartedMoving = false;
+            _pauseTimer = 0f;
+            _currentState = NPCState.WaitingAtItem;
+        }
+    }
+
+    /// <summary>
+    /// Waiting at item state: pause before picking up.
+    /// </summary>
+    private void HandleWaitingAtItemState()
+    {
+        _pauseTimer += Time.deltaTime;
+
+        if (_pauseTimer >= pickupPauseTime)
+        {
             _currentState = NPCState.PickingUp;
         }
     }
@@ -128,16 +155,28 @@ public class NPCInteractionController : MonoBehaviour
     /// </summary>
     private void HandlePickupState()
     {
-        // Cache the held item BEFORE calling OnPickedUp
+        // Cache the held item - check both on object and in parents
         if (_currentTargetObject != null)
         {
             _heldItem = _currentTargetObject.GetComponent<InteractableItem>();
+            if (_heldItem == null)
+            {
+                _heldItem = _currentTargetObject.GetComponentInParent<InteractableItem>();
+            }
         }
 
         if (_currentTarget != null && handBone != null && _heldItem != null)
         {
             Debug.Log($"[NPC] Picking up: {_heldItem.gameObject.name}");
             _currentTarget.OnPickedUp(handBone);
+
+            // Disable all renderers on the held item to hide it
+            Renderer[] renderers = _heldItem.GetComponentsInChildren<Renderer>();
+            foreach (Renderer r in renderers)
+            {
+                r.enabled = false;
+                Debug.Log($"[NPC] Disabled renderer: {r.gameObject.name}");
+            }
         }
         else
         {
@@ -191,6 +230,14 @@ public class NPCInteractionController : MonoBehaviour
         if (_heldItem != null && counterSpawn != null)
         {
             Debug.Log($"[NPC] Placing {_heldItem.gameObject.name} at counter");
+
+            // Re-enable all renderers to show the item again
+            Renderer[] renderers = _heldItem.GetComponentsInChildren<Renderer>();
+            foreach (Renderer r in renderers)
+            {
+                r.enabled = true;
+            }
+
             _heldItem.PlaceAt(counterSpawn.position);
         }
         else
@@ -232,6 +279,28 @@ public class NPCInteractionController : MonoBehaviour
 
             if (interactable != null)
             {
+                // Get the InteractableItem to check its category
+                InteractableItem item = col.GetComponent<InteractableItem>();
+                if (item == null)
+                {
+                    item = col.GetComponentInParent<InteractableItem>();
+                }
+
+                // Skip items that have already been delivered
+                if (item != null && item.IsDelivered)
+                {
+                    continue;
+                }
+
+                // Check category filter (empty list = accept all)
+                if (item != null && wantedCategories.Count > 0)
+                {
+                    if (item.ItemCategory == null || !wantedCategories.Contains(item.ItemCategory))
+                    {
+                        continue; // Skip items not in our wanted list
+                    }
+                }
+
                 float distance = Vector3.Distance(transform.position, col.transform.position);
                 if (distance < nearestDistance)
                 {
