@@ -51,6 +51,10 @@ public class NPCInteractionController : MonoBehaviour
     [Tooltip("Enable/disable item collection. Set to false to stop the NPC from collecting items.")]
     [SerializeField] private bool isCollecting = true;
 
+    [Header("Exit Settings")]
+    [Tooltip("The exit point where the NPC goes after checkout.")]
+    [SerializeField] private Transform exitPoint;
+
     [Header("Debug")]
     [SerializeField] private bool showDebugGizmos = true;
 
@@ -62,10 +66,11 @@ public class NPCInteractionController : MonoBehaviour
     private float _scanTimer;
     private float _pauseTimer;
     private bool _hasStartedMoving;
+    private bool _hasCheckedOut = false; // Set true when player triggers checkout
     private const float UNREACHABLE_RETRY_TIME = 10f; // Seconds before retrying unreachable items
 
     // States for the interaction flow
-    private enum NPCState { Idle, MovingToItem, WaitingAtItem, PickingUp, MovingToCounter, PlacingItem }
+    private enum NPCState { Idle, MovingToItem, WaitingAtItem, PickingUp, MovingToCounter, PlacingItem, MovingToExit }
     private NPCState _currentState = NPCState.Idle;
 
     private void Awake()
@@ -101,14 +106,36 @@ public class NPCInteractionController : MonoBehaviour
             case NPCState.PlacingItem:
                 HandlePlacingState();
                 break;
+
+            case NPCState.MovingToExit:
+                HandleMovingToExitState();
+                break;
         }
     }
 
     /// <summary>
     /// Idle state: scan for items periodically if autoScan is enabled.
+    /// If checkout is triggered, navigate to exit.
     /// </summary>
     private void HandleIdleState()
     {
+        // If checkout was triggered, head to exit
+        if (_hasCheckedOut)
+        {
+            if (exitPoint != null)
+            {
+                Debug.Log($"[NPC] Checkout complete! Heading to exit at {exitPoint.position}");
+                _agent.SetDestination(exitPoint.position);
+                _currentState = NPCState.MovingToExit;
+            }
+            else
+            {
+                Debug.LogWarning("[NPC] Checkout triggered but no exit point assigned! Despawning immediately.");
+                Destroy(gameObject);
+            }
+            return;
+        }
+
         if (!autoScan || !isCollecting) return;
 
         _scanTimer += Time.deltaTime;
@@ -116,6 +143,27 @@ public class NPCInteractionController : MonoBehaviour
         {
             _scanTimer = 0f;
             ScanForItems();
+        }
+    }
+
+    /// <summary>
+    /// Moving to exit state: check if NPC has reached the exit and despawn.
+    /// </summary>
+    private void HandleMovingToExitState()
+    {
+        if (_agent.pathPending) return;
+
+        // Mark that we've started moving
+        if (_agent.hasPath && _agent.remainingDistance > _agent.stoppingDistance)
+        {
+            _hasStartedMoving = true;
+        }
+
+        if (_hasStartedMoving && _agent.remainingDistance <= _agent.stoppingDistance && !_agent.pathPending)
+        {
+            Debug.Log("[NPC] Reached exit. Goodbye!");
+            _hasStartedMoving = false;
+            Destroy(gameObject);
         }
     }
 
@@ -494,6 +542,46 @@ public class NPCInteractionController : MonoBehaviour
     }
 
     /// <summary>
+    /// Triggers checkout - NPC will stop collecting and head to exit after placing items.
+    /// Call this when the player completes the transaction.
+    /// </summary>
+    public void TriggerCheckout()
+    {
+        _hasCheckedOut = true;
+        isCollecting = false;
+        Debug.Log("[NPC] Checkout triggered! Will head to exit when ready.");
+
+        // If idle with no items, immediately head to exit
+        if (_currentState == NPCState.Idle && _heldItems.Count == 0)
+        {
+            if (exitPoint != null)
+            {
+                Debug.Log($"[NPC] Heading to exit immediately at {exitPoint.position}");
+                _agent.SetDestination(exitPoint.position);
+                _currentState = NPCState.MovingToExit;
+            }
+        }
+        // If holding items, deliver them first (handled by existing logic)
+        else if (_heldItems.Count > 0 && _currentState == NPCState.Idle)
+        {
+            if (counterSpawn != null)
+            {
+                Debug.Log($"[NPC] Delivering remaining {_heldItems.Count} item(s) before checkout");
+                _agent.SetDestination(counterSpawn.position);
+                _currentState = NPCState.MovingToCounter;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns whether checkout has been triggered.
+    /// </summary>
+    public bool HasCheckedOut()
+    {
+        return _hasCheckedOut;
+    }
+
+    /// <summary>
     /// Returns the current state of the NPC.
     /// </summary>
     public string GetCurrentState()
@@ -526,6 +614,14 @@ public class NPCInteractionController : MonoBehaviour
             Gizmos.color = Color.cyan;
             Gizmos.DrawLine(transform.position, counterSpawn.position);
             Gizmos.DrawWireCube(counterSpawn.position, Vector3.one * 0.3f);
+        }
+
+        // Draw line to exit
+        if (exitPoint != null)
+        {
+            Gizmos.color = Color.magenta;
+            Gizmos.DrawLine(transform.position, exitPoint.position);
+            Gizmos.DrawWireSphere(exitPoint.position, 0.5f);
         }
     }
 }
