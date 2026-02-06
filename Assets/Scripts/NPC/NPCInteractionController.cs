@@ -41,16 +41,27 @@ public class NPCInteractionController : MonoBehaviour
     [Tooltip("Time to pause at item before picking it up.")]
     [SerializeField] private float pickupPauseTime = 0.5f;
 
+    [Header("Batch Collection")]
+    [Tooltip("If true, collect multiple items before going to counter. If false, deliver each item individually.")]
+    [SerializeField] private bool batchCollection = false;
+
+    [Tooltip("Number of items to collect before going to counter (when batch collection is enabled).")]
+    [SerializeField] private int batchSize = 4;
+
+    [Tooltip("Enable/disable item collection. Set to false to stop the NPC from collecting items.")]
+    [SerializeField] private bool isCollecting = true;
+
     [Header("Debug")]
     [SerializeField] private bool showDebugGizmos = true;
 
     private NavMeshAgent _agent;
     private IInteractable _currentTarget;
     private GameObject _currentTargetObject;
-    private InteractableItem _heldItem;
+    private List<InteractableItem> _heldItems = new List<InteractableItem>();
     private float _scanTimer;
     private float _pauseTimer;
     private bool _hasStartedMoving;
+    private int _counterPlaceIndex; // Tracks which item we're placing from the batch
 
     // States for the interaction flow
     private enum NPCState { Idle, MovingToItem, WaitingAtItem, PickingUp, MovingToCounter, PlacingItem }
@@ -97,7 +108,7 @@ public class NPCInteractionController : MonoBehaviour
     /// </summary>
     private void HandleIdleState()
     {
-        if (!autoScan) return;
+        if (!autoScan || !isCollecting) return;
 
         _scanTimer += Time.deltaTime;
         if (_scanTimer >= scanInterval)
@@ -151,27 +162,30 @@ public class NPCInteractionController : MonoBehaviour
     }
 
     /// <summary>
-    /// Pickup state: execute the pickup and move to counter.
+    /// Pickup state: execute the pickup and decide whether to continue collecting or go to counter.
     /// </summary>
     private void HandlePickupState()
     {
+        InteractableItem pickedItem = null;
+
         // Cache the held item - check both on object and in parents
         if (_currentTargetObject != null)
         {
-            _heldItem = _currentTargetObject.GetComponent<InteractableItem>();
-            if (_heldItem == null)
+            pickedItem = _currentTargetObject.GetComponent<InteractableItem>();
+            if (pickedItem == null)
             {
-                _heldItem = _currentTargetObject.GetComponentInParent<InteractableItem>();
+                pickedItem = _currentTargetObject.GetComponentInParent<InteractableItem>();
             }
         }
 
-        if (_currentTarget != null && handBone != null && _heldItem != null)
+        if (_currentTarget != null && handBone != null && pickedItem != null)
         {
-            Debug.Log($"[NPC] Picking up: {_heldItem.gameObject.name}");
+            Debug.Log($"[NPC] Picking up: {pickedItem.gameObject.name}");
             _currentTarget.OnPickedUp(handBone);
+            _heldItems.Add(pickedItem);
 
             // Disable all renderers on the held item to hide it
-            Renderer[] renderers = _heldItem.GetComponentsInChildren<Renderer>();
+            Renderer[] renderers = pickedItem.GetComponentsInChildren<Renderer>();
             foreach (Renderer r in renderers)
             {
                 r.enabled = false;
@@ -180,19 +194,39 @@ public class NPCInteractionController : MonoBehaviour
         }
         else
         {
-            Debug.LogWarning($"[NPC] Pickup failed - Target: {_currentTarget != null}, HandBone: {handBone != null}, HeldItem: {_heldItem != null}");
+            Debug.LogWarning($"[NPC] Pickup failed - Target: {_currentTarget != null}, HandBone: {handBone != null}, PickedItem: {pickedItem != null}");
         }
 
         // Clear pickup target
         _currentTarget = null;
         _currentTargetObject = null;
 
-        // Move to counter if assigned and we have an item
-        if (counterSpawn != null && _heldItem != null)
+        // Decide next action based on batch collection setting
+        bool shouldGoToCounter = false;
+
+        if (!batchCollection)
         {
-            Debug.Log($"[NPC] Moving to counter at {counterSpawn.position}");
+            // Individual mode: go to counter after each item
+            shouldGoToCounter = _heldItems.Count > 0;
+        }
+        else
+        {
+            // Batch mode: go to counter when batch is full OR if collecting is disabled
+            shouldGoToCounter = _heldItems.Count >= batchSize || (!isCollecting && _heldItems.Count > 0);
+        }
+
+        if (shouldGoToCounter && counterSpawn != null)
+        {
+            Debug.Log($"[NPC] Moving to counter with {_heldItems.Count} item(s) at {counterSpawn.position}");
+            _counterPlaceIndex = 0;
             _agent.SetDestination(counterSpawn.position);
             _currentState = NPCState.MovingToCounter;
+        }
+        else if (batchCollection && _heldItems.Count < batchSize && isCollecting)
+        {
+            // Continue collecting more items
+            Debug.Log($"[NPC] Collected {_heldItems.Count}/{batchSize} items, looking for more...");
+            _currentState = NPCState.Idle;
         }
         else
         {
@@ -223,29 +257,42 @@ public class NPCInteractionController : MonoBehaviour
     }
 
     /// <summary>
-    /// Placing state: place the item on the counter and return to idle.
+    /// Placing state: place all held items on the counter and return to idle.
     /// </summary>
     private void HandlePlacingState()
     {
-        if (_heldItem != null && counterSpawn != null)
+        if (_heldItems.Count > 0 && counterSpawn != null)
         {
-            Debug.Log($"[NPC] Placing {_heldItem.gameObject.name} at counter");
-
-            // Re-enable all renderers to show the item again
-            Renderer[] renderers = _heldItem.GetComponentsInChildren<Renderer>();
-            foreach (Renderer r in renderers)
+            // Place all items with slight offset to avoid stacking
+            float offsetStep = 0.3f;
+            for (int i = 0; i < _heldItems.Count; i++)
             {
-                r.enabled = true;
+                InteractableItem item = _heldItems[i];
+                if (item != null)
+                {
+                    Debug.Log($"[NPC] Placing {item.gameObject.name} at counter");
+
+                    // Re-enable all renderers to show the item again
+                    Renderer[] renderers = item.GetComponentsInChildren<Renderer>();
+                    foreach (Renderer r in renderers)
+                    {
+                        r.enabled = true;
+                    }
+
+                    // Offset each item slightly so they don't stack exactly
+                    Vector3 placePosition = counterSpawn.position + new Vector3(i * offsetStep, 0, 0);
+                    item.PlaceAt(placePosition);
+                }
             }
 
-            _heldItem.PlaceAt(counterSpawn.position);
+            Debug.Log($"[NPC] Placed {_heldItems.Count} item(s) at counter");
         }
         else
         {
-            Debug.LogWarning($"[NPC] Place failed - HeldItem: {_heldItem != null}, CounterSpawn: {counterSpawn != null}");
+            Debug.LogWarning($"[NPC] Place failed - HeldItems: {_heldItems.Count}, CounterSpawn: {counterSpawn != null}");
         }
 
-        _heldItem = null;
+        _heldItems.Clear();
         _currentState = NPCState.Idle;
     }
 
@@ -254,8 +301,10 @@ public class NPCInteractionController : MonoBehaviour
     /// </summary>
     public void ScanForItems()
     {
-        // Don't scan if already holding an item
-        if (_heldItem != null) return;
+        // Don't scan if not collecting or already holding max items in batch mode
+        if (!isCollecting) return;
+        if (batchCollection && _heldItems.Count >= batchSize) return;
+        if (!batchCollection && _heldItems.Count > 0) return;
 
         Collider[] hitColliders = Physics.OverlapSphere(transform.position, detectionRadius, itemLayerMask);
 
@@ -366,7 +415,44 @@ public class NPCInteractionController : MonoBehaviour
     /// </summary>
     public bool IsHoldingItem()
     {
-        return _heldItem != null;
+        return _heldItems.Count > 0;
+    }
+
+    /// <summary>
+    /// Returns the number of items currently held.
+    /// </summary>
+    public int GetHeldItemCount()
+    {
+        return _heldItems.Count;
+    }
+
+    /// <summary>
+    /// Sets whether the NPC should collect items.
+    /// </summary>
+    public void SetCollecting(bool collecting)
+    {
+        isCollecting = collecting;
+        Debug.Log($"[NPC] Collecting set to: {collecting}");
+
+        // If we're stopping collection and have items, go deliver them
+        if (!collecting && _heldItems.Count > 0 && _currentState == NPCState.Idle)
+        {
+            if (counterSpawn != null)
+            {
+                Debug.Log($"[NPC] Stopping collection, delivering {_heldItems.Count} item(s) to counter");
+                _counterPlaceIndex = 0;
+                _agent.SetDestination(counterSpawn.position);
+                _currentState = NPCState.MovingToCounter;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns whether the NPC is currently collecting items.
+    /// </summary>
+    public bool IsCollecting()
+    {
+        return isCollecting;
     }
 
     /// <summary>
