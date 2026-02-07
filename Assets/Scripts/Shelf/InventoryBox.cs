@@ -80,6 +80,7 @@ public class InventoryBox : MonoBehaviour
 
     /// <summary>
     /// Attempts to decrement the stock for a category. Returns true if successful.
+    /// If the box becomes empty, it will be destroyed.
     /// </summary>
     public bool TryDecrement(ItemCategory category)
     {
@@ -94,10 +95,35 @@ public class InventoryBox : MonoBehaviour
                 if (logOperations)
                     Debug.Log($"[InventoryBox] Decremented {category.name}. Remaining: {inventory[i].quantity}");
 
+                // Check if box is now empty
+                if (!HasAnyStock())
+                {
+                    DestroyEmptyBox();
+                }
+
                 return true;
             }
         }
         return false;
+    }
+
+    /// <summary>
+    /// Destroys this box when empty, properly releasing from player's grip.
+    /// </summary>
+    private void DestroyEmptyBox()
+    {
+        if (logOperations)
+            Debug.Log("[InventoryBox] Box is empty. Destroying...");
+
+        // Find ObjectPickup and force drop if this box is being held
+        ObjectPickup pickup = FindFirstObjectByType<ObjectPickup>();
+        if (pickup != null && pickup.GetHeldObject() == gameObject)
+        {
+            pickup.ForceDropObject();
+        }
+
+        // Destroy the box
+        Destroy(gameObject);
     }
 
     /// <summary>
