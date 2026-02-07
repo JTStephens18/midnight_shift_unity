@@ -40,6 +40,7 @@ public class ObjectPickup : MonoBehaviour
     private float _currentHoldDistance;
     private IPlaceable _currentPlaceable;
     private bool _isHoldingInventoryBox = false;
+    private DeliveryStation _currentDeliveryStation;
 
     void Start()
     {
@@ -65,12 +66,21 @@ public class ObjectPickup : MonoBehaviour
     {
         // Always detect placeable targets for highlight (some slots show even without held item)
         DetectPlaceable();
+        DetectDeliveryStation();
 
         if (Input.GetKeyDown(interactKey))
         {
             if (_heldObject == null)
             {
-                TryPickup();
+                // Check for delivery station first
+                if (_currentDeliveryStation != null)
+                {
+                    _currentDeliveryStation.SpawnBox();
+                }
+                else
+                {
+                    TryPickup();
+                }
             }
             // Check if we're in box-to-shelf placement mode
             else if (ItemPlacementManager.Instance != null && ItemPlacementManager.Instance.IsPlacementReady())
@@ -330,6 +340,39 @@ public class ObjectPickup : MonoBehaviour
 
         _currentPlaceable = newPlaceable;
     }
+
+    private void DetectDeliveryStation()
+    {
+        Ray ray = new Ray(_playerCamera.transform.position, _playerCamera.transform.forward);
+
+        DeliveryStation newStation = null;
+
+        if (Physics.Raycast(ray, out RaycastHit hit, pickupRange, pickupLayerMask))
+        {
+            newStation = hit.collider.GetComponent<DeliveryStation>();
+            if (newStation == null)
+                newStation = hit.collider.GetComponentInParent<DeliveryStation>();
+        }
+
+        // Handle highlight changes
+        if (newStation != _currentDeliveryStation)
+        {
+            // Hide highlight on previous station
+            if (_currentDeliveryStation != null)
+            {
+                _currentDeliveryStation.HideHighlight();
+            }
+
+            // Show highlight on new station
+            if (newStation != null)
+            {
+                newStation.ShowHighlight();
+            }
+        }
+
+        _currentDeliveryStation = newStation;
+    }
+
 
     private void PlaceOnShelf()
     {
