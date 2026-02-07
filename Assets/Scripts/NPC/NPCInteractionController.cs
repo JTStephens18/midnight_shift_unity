@@ -79,6 +79,10 @@ public class NPCInteractionController : MonoBehaviour
     private bool _hasCheckedOut = false; // Set true when player triggers checkout
     private const float UNREACHABLE_RETRY_TIME = 10f; // Seconds before retrying unreachable items
 
+    // Animation events for NPCAnimationController
+    public event System.Action OnPickupStart;
+    public event System.Action OnPlaceStart;
+
     // States for the interaction flow
     private enum NPCState { Idle, MovingToItem, WaitingAtItem, PickingUp, MovingToCounter, PlacingItem, MovingToExit }
     private NPCState _currentState = NPCState.Idle;
@@ -225,6 +229,9 @@ public class NPCInteractionController : MonoBehaviour
     /// </summary>
     private void HandlePickupState()
     {
+        // Trigger pickup animation event
+        OnPickupStart?.Invoke();
+
         InteractableItem pickedItem = null;
 
         // Cache the held item - check both on object and in parents
@@ -319,6 +326,9 @@ public class NPCInteractionController : MonoBehaviour
     /// </summary>
     private void HandlePlacingState()
     {
+        // Trigger place animation event
+        OnPlaceStart?.Invoke();
+
         if (_heldItems.Count > 0 && counterSpawn != null)
         {
             // Place all items with slight offset to avoid stacking
