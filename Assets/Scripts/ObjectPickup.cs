@@ -41,6 +41,8 @@ public class ObjectPickup : MonoBehaviour
     private IPlaceable _currentPlaceable;
     private bool _isHoldingInventoryBox = false;
     private DeliveryStation _currentDeliveryStation;
+    private InteractableItem _currentCounterItem;
+    private CounterSlot _currentCounterItemSlot;
 
     void Start()
     {
@@ -67,13 +69,19 @@ public class ObjectPickup : MonoBehaviour
         // Always detect placeable targets for highlight (some slots show even without held item)
         DetectPlaceable();
         DetectDeliveryStation();
+        DetectCounterItem();
 
         if (Input.GetKeyDown(interactKey))
         {
             if (_heldObject == null)
             {
-                // Check for delivery station first
-                if (_currentDeliveryStation != null)
+                // Check for counter item first (delete on E press)
+                if (_currentCounterItem != null && _currentCounterItemSlot != null)
+                {
+                    DeleteCounterItem();
+                }
+                // Check for delivery station
+                else if (_currentDeliveryStation != null)
                 {
                     _currentDeliveryStation.SpawnBox();
                 }
@@ -371,6 +379,98 @@ public class ObjectPickup : MonoBehaviour
         }
 
         _currentDeliveryStation = newStation;
+    }
+
+    private void DetectCounterItem()
+    {
+        // Only detect counter items when not holding anything
+        if (_heldObject != null)
+        {
+            ClearCounterItemHighlight();
+            return;
+        }
+
+        Ray ray = new Ray(_playerCamera.transform.position, _playerCamera.transform.forward);
+        InteractableItem newItem = null;
+        CounterSlot newSlot = null;
+
+        if (Physics.Raycast(ray, out RaycastHit hit, pickupRange, pickupLayerMask))
+        {
+            // First, check if we directly hit a CounterSlot
+            CounterSlot slot = hit.collider.GetComponent<CounterSlot>();
+            if (slot != null)
+            {
+                // We hit the slot's collider - get the first item in this slot
+                if (slot.HasItems)
+                {
+                    foreach (var placement in slot.ItemPlacements)
+                    {
+                        if (placement.placedItem != null)
+                        {
+                            InteractableItem item = placement.placedItem.GetComponent<InteractableItem>();
+                            if (item != null)
+                            {
+                                newItem = item;
+                                newSlot = slot;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Check if we hit an interactable item directly
+                InteractableItem item = hit.collider.GetComponent<InteractableItem>();
+                if (item == null)
+                    item = hit.collider.GetComponentInParent<InteractableItem>();
+
+                if (item != null)
+                {
+                    // Check if this item is parented to a counter slot
+                    CounterSlot parentSlot = item.transform.parent?.GetComponent<CounterSlot>();
+                    if (parentSlot != null)
+                    {
+                        newItem = item;
+                        newSlot = parentSlot;
+                    }
+                }
+            }
+        }
+
+        // Handle highlight changes
+        if (newItem != _currentCounterItem)
+        {
+            ClearCounterItemHighlight();
+        }
+
+        _currentCounterItem = newItem;
+        _currentCounterItemSlot = newSlot;
+    }
+
+    private void ClearCounterItemHighlight()
+    {
+        // Clear any visual highlight on current item if needed
+        _currentCounterItem = null;
+        _currentCounterItemSlot = null;
+    }
+
+    private void DeleteCounterItem()
+    {
+        if (_currentCounterItem == null || _currentCounterItemSlot == null) return;
+
+        Debug.Log($"[ObjectPickup] Deleting counter item: {_currentCounterItem.gameObject.name}");
+
+        // Remove from slot
+        GameObject itemObj = _currentCounterItem.gameObject;
+        _currentCounterItemSlot.RemoveItem(itemObj);
+
+        // Destroy the item
+        Destroy(itemObj);
+
+        // Clear references
+        _currentCounterItem = null;
+        _currentCounterItemSlot = null;
     }
 
 

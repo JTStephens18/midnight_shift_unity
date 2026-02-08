@@ -27,8 +27,8 @@ public class NPCInteractionController : MonoBehaviour
     [SerializeField] private Transform handBone;
 
     [Header("Counter Settings")]
-    [Tooltip("The spawn point on the counter where items will be placed.")]
-    [SerializeField] private Transform counterSpawn;
+    [Tooltip("Counter slots where items will be placed.")]
+    [SerializeField] private List<CounterSlot> counterSlots = new List<CounterSlot>();
 
     [Header("Item Preferences")]
     [Tooltip("Categories of items this NPC will pick up. Leave empty to pick up any item.")]
@@ -130,6 +130,7 @@ public class NPCInteractionController : MonoBehaviour
     /// <summary>
     /// Idle state: scan for items periodically if autoScan is enabled.
     /// If checkout is triggered, navigate to exit.
+    /// If holding items, try to deliver them to counter.
     /// </summary>
     private void HandleIdleState()
     {
@@ -147,6 +148,21 @@ public class NPCInteractionController : MonoBehaviour
                 Debug.LogWarning("[NPC] Checkout triggered but no exit point assigned! Despawning immediately.");
                 Destroy(gameObject);
             }
+            return;
+        }
+
+        // If holding items, try to deliver them to counter
+        if (_heldItems.Count > 0)
+        {
+            CounterSlot availableSlot = GetAvailableCounterSlot();
+            if (availableSlot != null)
+            {
+                Debug.Log($"[NPC] Counter slot available, delivering {_heldItems.Count} held item(s)");
+                _agent.SetDestination(availableSlot.Position);
+                _currentState = NPCState.MovingToCounter;
+                return;
+            }
+            // Still no slot available, wait...
             return;
         }
 
@@ -195,13 +211,27 @@ public class NPCInteractionController : MonoBehaviour
         // Wait for path to be calculated and agent to start moving
         if (_agent.pathPending) return;
 
-        // Mark that we've started moving once we have a valid path
-        if (_agent.hasPath && _agent.remainingDistance > _agent.stoppingDistance)
+        // Check if we're already at the destination (e.g., item placed in same slot we just picked from)
+        // This can happen when remainingDistance starts at or below stoppingDistance
+        if (!_hasStartedMoving)
         {
-            _hasStartedMoving = true;
+            if (_agent.remainingDistance > _agent.stoppingDistance)
+            {
+                // We need to travel, mark that we've started moving
+                _hasStartedMoving = true;
+            }
+            else if (_agent.hasPath || _agent.remainingDistance <= _agent.stoppingDistance)
+            {
+                // We're already at (or very close to) the destination - skip directly to waiting
+                Debug.Log($"[NPC] Already at item location: {_currentTargetObject.name} (distance: {_agent.remainingDistance:F2})");
+                _hasStartedMoving = false;
+                _pauseTimer = 0f;
+                _currentState = NPCState.WaitingAtItem;
+                return;
+            }
         }
 
-        // Only check arrival after we've actually started moving
+        // Check arrival after we've started moving
         if (_hasStartedMoving && _agent.remainingDistance <= _agent.stoppingDistance && !_agent.pathPending)
         {
             Debug.Log($"[NPC] Arrived at item: {_currentTargetObject.name}");
@@ -281,11 +311,27 @@ public class NPCInteractionController : MonoBehaviour
             shouldGoToCounter = _heldItems.Count >= batchSize || (!isCollecting && _heldItems.Count > 0);
         }
 
-        if (shouldGoToCounter && counterSpawn != null)
+        if (shouldGoToCounter)
         {
-            Debug.Log($"[NPC] Moving to counter with {_heldItems.Count} item(s) at {counterSpawn.position}");
-            _agent.SetDestination(counterSpawn.position);
-            _currentState = NPCState.MovingToCounter;
+            CounterSlot availableSlot = GetAvailableCounterSlot();
+            if (availableSlot != null)
+            {
+                Debug.Log($"[NPC] Moving to counter slot '{availableSlot.name}' with {_heldItems.Count} item(s)");
+                _agent.SetDestination(availableSlot.Position);
+                _currentState = NPCState.MovingToCounter;
+            }
+            else if (counterSlots.Count > 0)
+            {
+                // All slots occupied - go to the first counter slot position and wait
+                Debug.Log($"[NPC] All counter slots full, moving to counter to wait with {_heldItems.Count} item(s)");
+                _agent.SetDestination(counterSlots[0].Position);
+                _currentState = NPCState.MovingToCounter;
+            }
+            else
+            {
+                Debug.LogWarning("[NPC] No counter slots assigned! Cannot deliver items.");
+                _currentState = NPCState.Idle;
+            }
         }
         else if (batchCollection && _heldItems.Count < batchSize && isCollecting)
         {
@@ -295,7 +341,6 @@ public class NPCInteractionController : MonoBehaviour
         }
         else
         {
-            if (counterSpawn == null) Debug.LogWarning("[NPC] No counter spawn assigned!");
             _currentState = NPCState.Idle;
         }
     }
@@ -307,12 +352,25 @@ public class NPCInteractionController : MonoBehaviour
     {
         if (_agent.pathPending) return;
 
-        // Mark that we've started moving
-        if (_agent.hasPath && _agent.remainingDistance > _agent.stoppingDistance)
+        // Check if we're already at the destination (e.g., waiting at counter for slot to become available)
+        if (!_hasStartedMoving)
         {
-            _hasStartedMoving = true;
+            if (_agent.remainingDistance > _agent.stoppingDistance)
+            {
+                // We need to travel, mark that we've started moving
+                _hasStartedMoving = true;
+            }
+            else if (_agent.hasPath || _agent.remainingDistance <= _agent.stoppingDistance)
+            {
+                // We're already at (or very close to) the counter - skip directly to placing
+                Debug.Log($"[NPC] Already at counter (distance: {_agent.remainingDistance:F2})");
+                _hasStartedMoving = false;
+                _currentState = NPCState.PlacingItem;
+                return;
+            }
         }
 
+        // Check arrival after we've started moving
         if (_hasStartedMoving && _agent.remainingDistance <= _agent.stoppingDistance && !_agent.pathPending)
         {
             Debug.Log("[NPC] Arrived at counter");
@@ -322,46 +380,102 @@ public class NPCInteractionController : MonoBehaviour
     }
 
     /// <summary>
-    /// Placing state: place all held items on the counter and return to idle.
+    /// Placing state: place all held items on the counter slots and return to idle.
     /// </summary>
     private void HandlePlacingState()
     {
         // Trigger place animation event
         OnPlaceStart?.Invoke();
 
-        if (_heldItems.Count > 0 && counterSpawn != null)
+        if (_heldItems.Count > 0)
         {
-            // Place all items with slight offset to avoid stacking
-            float offsetStep = 0.3f;
+            // Track items that were successfully placed so we can remove them
+            List<InteractableItem> placedItems = new List<InteractableItem>();
+
             for (int i = 0; i < _heldItems.Count; i++)
             {
                 InteractableItem item = _heldItems[i];
                 if (item != null)
                 {
-                    Debug.Log($"[NPC] Placing {item.gameObject.name} at counter");
-
-                    // Re-enable all renderers to show the item again
-                    Renderer[] renderers = item.GetComponentsInChildren<Renderer>();
-                    foreach (Renderer r in renderers)
+                    // Find an available counter slot
+                    CounterSlot slot = GetAvailableCounterSlot();
+                    if (slot != null)
                     {
-                        r.enabled = true;
-                    }
+                        Debug.Log($"[NPC] Placing {item.gameObject.name} in counter slot '{slot.name}'");
 
-                    // Offset each item slightly so they don't stack exactly
-                    Vector3 placePosition = counterSpawn.position + new Vector3(i * offsetStep, 0, 0);
-                    item.PlaceAt(placePosition);
+                        // Re-activate and show the item
+                        item.gameObject.SetActive(true);
+                        Renderer[] renderers = item.GetComponentsInChildren<Renderer>();
+                        foreach (Renderer r in renderers)
+                        {
+                            r.enabled = true;
+                        }
+
+                        // Re-enable collider so player can interact with it
+                        Collider col = item.GetComponent<Collider>();
+                        if (col != null)
+                        {
+                            col.enabled = true;
+                        }
+
+                        // Mark as delivered so NPC won't pick it up again
+                        item.MarkAsDelivered();
+
+                        // Place in slot (handles positioning and physics)
+                        slot.PlaceItem(item.gameObject);
+                        placedItems.Add(item);
+                    }
+                    else
+                    {
+                        // No more slots available, stop trying to place
+                        Debug.Log($"[NPC] Counter slots full, waiting to place remaining {_heldItems.Count - placedItems.Count} item(s)");
+                        break;
+                    }
                 }
             }
 
-            Debug.Log($"[NPC] Placed {_heldItems.Count} item(s) at counter");
+            // Remove only the items that were successfully placed
+            foreach (InteractableItem placed in placedItems)
+            {
+                _heldItems.Remove(placed);
+            }
+
+            Debug.Log($"[NPC] Placed {placedItems.Count} item(s) at counter, {_heldItems.Count} remaining");
+
+            // If we still have items, wait at counter for a slot to become available
+            if (_heldItems.Count > 0)
+            {
+                Debug.Log("[NPC] Waiting at counter for slot to become available...");
+                // Stay at counter and check again next frame
+                // We'll re-enter placing state via the Idle->scan->pickup flow won't work here
+                // So we need a wait state or re-check periodically
+                _currentState = NPCState.Idle; // Will scan and realize it's holding items
+            }
+            else
+            {
+                _currentState = NPCState.Idle;
+            }
         }
         else
         {
-            Debug.LogWarning($"[NPC] Place failed - HeldItems: {_heldItems.Count}, CounterSpawn: {counterSpawn != null}");
+            Debug.LogWarning("[NPC] Place failed - no items held");
+            _currentState = NPCState.Idle;
         }
+    }
 
-        _heldItems.Clear();
-        _currentState = NPCState.Idle;
+    /// <summary>
+    /// Gets the first available counter slot that has room for items.
+    /// </summary>
+    private CounterSlot GetAvailableCounterSlot()
+    {
+        foreach (CounterSlot slot in counterSlots)
+        {
+            if (slot != null && !slot.IsOccupied)
+            {
+                return slot;
+            }
+        }
+        return null;
     }
 
     /// <summary>
@@ -370,10 +484,24 @@ public class NPCInteractionController : MonoBehaviour
     /// </summary>
     public void ScanForItems()
     {
+        Debug.Log($"[NPC] ScanForItems called - isCollecting={isCollecting}, heldItems={_heldItems.Count}, batchCollection={batchCollection}, batchSize={batchSize}, useShelfSlots={useShelfSlots}");
+
         // Don't scan if not collecting or already holding max items in batch mode
-        if (!isCollecting) return;
-        if (batchCollection && _heldItems.Count >= batchSize) return;
-        if (!batchCollection && _heldItems.Count > 0) return;
+        if (!isCollecting)
+        {
+            Debug.Log("[NPC] ScanForItems: Skipped - not collecting");
+            return;
+        }
+        if (batchCollection && _heldItems.Count >= batchSize)
+        {
+            Debug.Log("[NPC] ScanForItems: Skipped - batch full");
+            return;
+        }
+        if (!batchCollection && _heldItems.Count > 0)
+        {
+            Debug.Log("[NPC] ScanForItems: Skipped - not batch mode and holding item");
+            return;
+        }
 
         // If using shelf slots, scan from allowed slots instead
         if (useShelfSlots)
@@ -467,31 +595,56 @@ public class NPCInteractionController : MonoBehaviour
             return;
         }
 
+        Debug.Log($"[NPC] ScanShelfSlots: Scanning {allowedShelfSlots.Count} slots...");
+
         float nearestDistance = float.MaxValue;
         ShelfSlot nearestSlot = null;
         InteractableItem nearestItem = null;
 
         foreach (ShelfSlot slot in allowedShelfSlots)
         {
-            if (slot == null) continue;
-            if (!slot.HasItems) continue;
+            if (slot == null)
+            {
+                Debug.Log("[NPC] ScanShelfSlots: Skipping null slot reference");
+                continue;
+            }
+
+            Debug.Log($"[NPC] ScanShelfSlots: Checking slot '{slot.name}' - HasItems={slot.HasItems}, CurrentCount={slot.CurrentItemCount}, MaxItems={slot.MaxItems}");
+
+            if (!slot.HasItems)
+            {
+                Debug.Log($"[NPC] ScanShelfSlots: Slot '{slot.name}' has no items, skipping");
+                continue;
+            }
 
             // Get the first available item from this slot's placements
             InteractableItem item = null;
+            int placementIndex = 0;
             foreach (ItemPlacement placement in slot.ItemPlacements)
             {
+                Debug.Log($"[NPC] ScanShelfSlots: Slot '{slot.name}' placement[{placementIndex}] - placedItem={(placement.placedItem != null ? placement.placedItem.name : "null")}");
+
                 if (placement.placedItem != null)
                 {
                     item = placement.placedItem.GetComponent<InteractableItem>();
+                    bool isDelivered = item != null && item.IsDelivered;
+                    Debug.Log($"[NPC] ScanShelfSlots: Found item at placement[{placementIndex}], InteractableItem={(item != null ? "found" : "null")}, IsDelivered={isDelivered}");
+
                     if (item != null && !item.IsDelivered)
                     {
+                        Debug.Log($"[NPC] ScanShelfSlots: Valid item found: {item.gameObject.name}");
                         break;
                     }
                     item = null;
                 }
+                placementIndex++;
             }
 
-            if (item == null) continue;
+            if (item == null)
+            {
+                Debug.Log($"[NPC] ScanShelfSlots: Slot '{slot.name}' had items but none valid for pickup");
+                continue;
+            }
 
             // Check category filter
             if (wantedCategories.Count > 0)
@@ -646,10 +799,11 @@ public class NPCInteractionController : MonoBehaviour
         // If we're stopping collection and have items, go deliver them
         if (!collecting && _heldItems.Count > 0 && _currentState == NPCState.Idle)
         {
-            if (counterSpawn != null)
+            CounterSlot slot = GetAvailableCounterSlot();
+            if (slot != null)
             {
                 Debug.Log($"[NPC] Stopping collection, delivering {_heldItems.Count} item(s) to counter");
-                _agent.SetDestination(counterSpawn.position);
+                _agent.SetDestination(slot.Position);
                 _currentState = NPCState.MovingToCounter;
             }
         }
@@ -686,10 +840,11 @@ public class NPCInteractionController : MonoBehaviour
         // If holding items, deliver them first (handled by existing logic)
         else if (_heldItems.Count > 0 && _currentState == NPCState.Idle)
         {
-            if (counterSpawn != null)
+            CounterSlot slot = GetAvailableCounterSlot();
+            if (slot != null)
             {
                 Debug.Log($"[NPC] Delivering remaining {_heldItems.Count} item(s) before checkout");
-                _agent.SetDestination(counterSpawn.position);
+                _agent.SetDestination(slot.Position);
                 _currentState = NPCState.MovingToCounter;
             }
         }
@@ -730,12 +885,15 @@ public class NPCInteractionController : MonoBehaviour
             Gizmos.DrawLine(transform.position, _currentTargetObject.transform.position);
         }
 
-        // Draw line to counter
-        if (counterSpawn != null)
+        // Draw lines to counter slots
+        foreach (CounterSlot slot in counterSlots)
         {
-            Gizmos.color = Color.cyan;
-            Gizmos.DrawLine(transform.position, counterSpawn.position);
-            Gizmos.DrawWireCube(counterSpawn.position, Vector3.one * 0.3f);
+            if (slot != null)
+            {
+                Gizmos.color = slot.IsOccupied ? Color.red : Color.cyan;
+                Gizmos.DrawLine(transform.position, slot.Position);
+                Gizmos.DrawWireCube(slot.Position, Vector3.one * 0.3f);
+            }
         }
 
         // Draw line to exit

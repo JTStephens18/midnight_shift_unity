@@ -25,6 +25,14 @@ public class InteractableItem : MonoBehaviour, IInteractable
     /// </summary>
     public bool IsDelivered { get; private set; } = false;
 
+    /// <summary>
+    /// Marks this item as delivered to the counter.
+    /// </summary>
+    public void MarkAsDelivered()
+    {
+        IsDelivered = true;
+    }
+
     private Rigidbody _rigidbody;
     private Collider _collider;
     private Renderer[] _renderers;

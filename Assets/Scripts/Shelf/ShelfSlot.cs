@@ -279,11 +279,19 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
     /// </summary>
     public void PlaceItem(GameObject item)
     {
-        if (currentItemCount >= itemPlacements.Count) return;
+        if (currentItemCount >= itemPlacements.Count)
+        {
+            Debug.LogWarning($"[ShelfSlot] Cannot place item - slot '{gameObject.name}' is full ({currentItemCount}/{itemPlacements.Count})");
+            return;
+        }
+
+        Debug.Log($"[ShelfSlot] PlaceItem: Adding '{item.name}' to slot '{gameObject.name}' at position {currentItemCount}");
 
         ItemPlacement placement = itemPlacements[currentItemCount];
         placement.placedItem = item;
         currentItemCount++;
+
+        Debug.Log($"[ShelfSlot] PlaceItem: Slot '{gameObject.name}' now has {currentItemCount} items. placedItem at [{currentItemCount - 1}] = {placement.placedItem?.name ?? "null"}");
 
         // Parent first, then set local transforms for precise control
         item.transform.SetParent(transform);
@@ -313,14 +321,26 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
     /// </summary>
     public GameObject RemoveItem()
     {
-        if (currentItemCount <= 0) return null;
+        Debug.Log($"[ShelfSlot] RemoveItem: Slot '{gameObject.name}' has {currentItemCount} items before removal");
+
+        if (currentItemCount <= 0)
+        {
+            Debug.Log($"[ShelfSlot] RemoveItem: Slot '{gameObject.name}' is empty, returning null");
+            return null;
+        }
 
         currentItemCount--;
         ItemPlacement placement = itemPlacements[currentItemCount];
         GameObject item = placement.placedItem;
         placement.placedItem = null;
 
-        if (item == null) return null;
+        Debug.Log($"[ShelfSlot] RemoveItem: Removed item '{item?.name ?? "null"}' from position {currentItemCount}. Slot now has {currentItemCount} items");
+
+        if (item == null)
+        {
+            Debug.LogWarning($"[ShelfSlot] RemoveItem: Slot '{gameObject.name}' had count {currentItemCount + 1} but placedItem was null!");
+            return null;
+        }
 
         // Unparent the item
         item.transform.SetParent(null);
