@@ -2,7 +2,7 @@ using UnityEngine;
 
 /// <summary>
 /// Cash register that triggers NPC checkout when the player interacts with it.
-/// Attach to the CashRegister object and ensure it has a collider.
+/// Checkout is only allowed when counter is empty (all items have been bagged).
 /// </summary>
 public class CashRegister : MonoBehaviour
 {
@@ -15,10 +15,6 @@ public class CashRegister : MonoBehaviour
 
     [Tooltip("Layer mask for the register. Leave as default to detect this object.")]
     [SerializeField] private LayerMask registerLayer = ~0;
-
-    [Header("References")]
-    [Tooltip("Optional: Specific NPC to checkout. If empty, finds all NPCs in scene.")]
-    [SerializeField] private NPCInteractionController targetNPC;
 
     private Camera _playerCamera;
 
@@ -53,13 +49,30 @@ public class CashRegister : MonoBehaviour
 
     private void TriggerCheckout()
     {
-        if (targetNPC != null)
+        // Check if queue manager exists
+        if (CheckoutQueueManager.Instance == null)
         {
-            // Checkout specific NPC
-            if (!targetNPC.HasCheckedOut())
+            Debug.LogWarning("[CashRegister] No CheckoutQueueManager found! Please add one to the scene.");
+            return;
+        }
+
+        // Block checkout if counter has items
+        if (!CheckoutQueueManager.Instance.IsCounterClear())
+        {
+            Debug.Log("[CashRegister] Cannot checkout - counter still has items! Remove all items first.");
+            // TODO: Could trigger a UI message or sound here
+            return;
+        }
+
+        // Get the NPC currently at counter
+        NPCInteractionController npcAtCounter = CheckoutQueueManager.Instance.CurrentlyAtCounter;
+
+        if (npcAtCounter != null)
+        {
+            if (!npcAtCounter.HasCheckedOut())
             {
-                Debug.Log("[CashRegister] Processing checkout for NPC");
-                targetNPC.TriggerCheckout();
+                Debug.Log($"[CashRegister] Processing checkout for NPC: {npcAtCounter.name}");
+                npcAtCounter.TriggerCheckout();
             }
             else
             {
@@ -68,27 +81,17 @@ public class CashRegister : MonoBehaviour
         }
         else
         {
-            // Find and checkout all NPCs in scene
-            NPCInteractionController[] allNPCs = FindObjectsOfType<NPCInteractionController>();
-            int checkedOut = 0;
-
-            foreach (var npc in allNPCs)
-            {
-                if (!npc.HasCheckedOut())
-                {
-                    npc.TriggerCheckout();
-                    checkedOut++;
-                }
-            }
-
-            if (checkedOut > 0)
-            {
-                Debug.Log($"[CashRegister] Processed checkout for {checkedOut} NPC(s)");
-            }
-            else
-            {
-                Debug.Log("[CashRegister] No NPCs to checkout");
-            }
+            Debug.Log("[CashRegister] No NPC at counter to checkout");
         }
+    }
+
+    /// <summary>
+    /// Check if checkout is currently possible.
+    /// </summary>
+    public bool CanCheckout()
+    {
+        if (CheckoutQueueManager.Instance == null) return false;
+        return CheckoutQueueManager.Instance.IsCounterClear() &&
+               CheckoutQueueManager.Instance.CurrentlyAtCounter != null;
     }
 }

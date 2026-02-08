@@ -471,6 +471,12 @@ public class ObjectPickup : MonoBehaviour
         // Clear references
         _currentCounterItem = null;
         _currentCounterItemSlot = null;
+
+        // Notify queue manager that counter state changed (may allow queue to advance)
+        if (CheckoutQueueManager.Instance != null)
+        {
+            CheckoutQueueManager.Instance.NotifyCounterStateChanged();
+        }
     }
 
 

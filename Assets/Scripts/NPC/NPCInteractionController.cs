@@ -82,8 +82,9 @@ public class NPCInteractionController : MonoBehaviour
     public event System.Action OnPlaceStart;
 
     // States for the interaction flow
-    private enum NPCState { Idle, MovingToItem, WaitingAtItem, PickingUp, MovingToCounter, PlacingItem, MovingToExit }
+    private enum NPCState { Idle, MovingToItem, WaitingAtItem, PickingUp, WaitingInQueue, MovingToCounter, PlacingItem, WaitingForCheckout, MovingToExit }
     private NPCState _currentState = NPCState.Idle;
+    private int _queuePosition = -1; // Current position in checkout queue
 
     /// <summary>
     /// Helper method for conditional debug logging.
@@ -119,12 +120,20 @@ public class NPCInteractionController : MonoBehaviour
                 HandlePickupState();
                 break;
 
+            case NPCState.WaitingInQueue:
+                HandleWaitingInQueueState();
+                break;
+
             case NPCState.MovingToCounter:
                 HandleMovingToCounterState();
                 break;
 
             case NPCState.PlacingItem:
                 HandlePlacingState();
+                break;
+
+            case NPCState.WaitingForCheckout:
+                HandleWaitingForCheckoutState();
                 break;
 
             case NPCState.MovingToExit:
@@ -157,21 +166,8 @@ public class NPCInteractionController : MonoBehaviour
             return;
         }
 
-        // If holding items that need to be delivered - only deliver when batch is full or not collecting
-        if (_heldItems.Count > 0 && (_heldItems.Count >= batchSize || !isCollecting))
-        {
-            CounterSlot availableSlot = GetAvailableCounterSlot();
-            if (availableSlot != null)
-            {
-                DebugLog($"[NPC] Counter slot available, delivering {_heldItems.Count} held item(s)");
-                _agent.SetDestination(availableSlot.Position);
-                _currentState = NPCState.MovingToCounter;
-                return;
-            }
-            // Still no slot available, wait...
-            return;
-        }
-        // Still collecting - continue to scanning below
+        // Note: Counter delivery is now handled by the queue system after pickup
+        // NPCs with full batches enqueue and wait in WaitingInQueue state
 
         if (!autoScan || !isCollecting) return;
 
@@ -304,29 +300,31 @@ public class NPCInteractionController : MonoBehaviour
         _currentTarget = null;
         _currentTargetObject = null;
 
-        // Decide next action - go to counter when batch is full or if collecting is disabled
-        bool shouldGoToCounter = _heldItems.Count >= batchSize || (!isCollecting && _heldItems.Count > 0);
+        // Decide next action - go to queue when batch is full or if collecting is disabled
+        bool shouldCheckout = _heldItems.Count >= batchSize || (!isCollecting && _heldItems.Count > 0);
 
-        if (shouldGoToCounter)
+        if (shouldCheckout)
         {
-            CounterSlot availableSlot = GetAvailableCounterSlot();
-            if (availableSlot != null)
+            // Enqueue for checkout instead of going directly to counter
+            if (CheckoutQueueManager.Instance != null)
             {
-                DebugLog($"[NPC] Moving to counter slot '{availableSlot.name}' with {_heldItems.Count} item(s)");
-                _agent.SetDestination(availableSlot.Position);
-                _currentState = NPCState.MovingToCounter;
-            }
-            else if (counterSlots.Count > 0)
-            {
-                // All slots occupied - go to the first counter slot position and wait
-                DebugLog($"[NPC] All counter slots full, moving to counter to wait with {_heldItems.Count} item(s)");
-                _agent.SetDestination(counterSlots[0].Position);
-                _currentState = NPCState.MovingToCounter;
+                DebugLog($"[NPC] Batch full with {_heldItems.Count} items, joining checkout queue");
+                CheckoutQueueManager.Instance.EnqueueForCheckout(this);
+                _currentState = NPCState.WaitingInQueue;
             }
             else
             {
-                Debug.LogWarning("[NPC] No counter slots assigned! Cannot deliver items.");
-                _currentState = NPCState.Idle;
+                // Fallback if no queue manager - go directly to counter (legacy behavior)
+                Debug.LogWarning("[NPC] No CheckoutQueueManager found! Using legacy counter logic.");
+                if (counterSlots.Count > 0)
+                {
+                    _agent.SetDestination(counterSlots[0].Position);
+                    _currentState = NPCState.MovingToCounter;
+                }
+                else
+                {
+                    _currentState = NPCState.Idle;
+                }
             }
         }
         else if (_heldItems.Count < batchSize && isCollecting)
@@ -376,12 +374,99 @@ public class NPCInteractionController : MonoBehaviour
     }
 
     /// <summary>
+    /// Waiting in queue state: NPC waits at their queue position until it's their turn.
+    /// </summary>
+    private void HandleWaitingInQueueState()
+    {
+        // Queue manager will call OnTurnToPlaceItems when it's our turn
+        // For now, just move to our queue position
+        if (CheckoutQueueManager.Instance != null && _queuePosition >= 0)
+        {
+            Vector3 waitPosition = CheckoutQueueManager.Instance.GetQueueWaitPosition(_queuePosition);
+            float distanceToPosition = Vector3.Distance(transform.position, waitPosition);
+
+            if (distanceToPosition > _agent.stoppingDistance * 2)
+            {
+                _agent.SetDestination(waitPosition);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Waiting for checkout state: NPC has placed items and waits for player to process checkout.
+    /// </summary>
+    private void HandleWaitingForCheckoutState()
+    {
+        // Just wait - TriggerCheckout will be called by the CashRegister when player checks out
+        // If checkout was triggered, _hasCheckedOut will be set and we'll go to exit next update
+        if (_hasCheckedOut)
+        {
+            // Notify queue manager that we're done
+            if (CheckoutQueueManager.Instance != null)
+            {
+                CheckoutQueueManager.Instance.OnCheckoutComplete(this);
+            }
+
+            // Head to exit
+            if (exitPoint != null)
+            {
+                DebugLog($"[NPC] Checkout complete! Heading to exit at {exitPoint.position}");
+                _agent.SetDestination(exitPoint.position);
+                _currentState = NPCState.MovingToExit;
+            }
+            else
+            {
+                Debug.LogWarning("[NPC] Checkout triggered but no exit point assigned! Despawning immediately.");
+                Destroy(gameObject);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Called by CheckoutQueueManager when it's this NPC's turn to place items at counter.
+    /// </summary>
+    public void OnTurnToPlaceItems()
+    {
+        DebugLog("[NPC] It's my turn! Moving to counter to place items.");
+
+        if (counterSlots.Count > 0)
+        {
+            _agent.SetDestination(counterSlots[0].Position);
+            _currentState = NPCState.MovingToCounter;
+        }
+        else
+        {
+            Debug.LogWarning("[NPC] No counter slots assigned!");
+            _currentState = NPCState.Idle;
+        }
+    }
+
+    /// <summary>
+    /// Called by CheckoutQueueManager to update this NPC's position in the queue.
+    /// </summary>
+    public void UpdateQueuePosition(int position)
+    {
+        _queuePosition = position;
+        DebugLog($"[NPC] Queue position updated to {position}");
+    }
+
+    /// <summary>
     /// Placing state: place all held items on the counter slots and return to idle.
     /// </summary>
     private void HandlePlacingState()
     {
         // Trigger place animation event
         OnPlaceStart?.Invoke();
+
+        DebugLog($"[NPC] HandlePlacingState: heldItems={_heldItems.Count}, counterSlots={counterSlots.Count}");
+
+        // Check if we have counter slots assigned
+        if (counterSlots.Count == 0)
+        {
+            Debug.LogWarning("[NPC] No counter slots assigned to NPC! Cannot place items.");
+            _currentState = NPCState.WaitingForCheckout;
+            return;
+        }
 
         if (_heldItems.Count > 0)
         {
@@ -442,20 +527,20 @@ public class NPCInteractionController : MonoBehaviour
             if (_heldItems.Count > 0)
             {
                 DebugLog("[NPC] Waiting at counter for slot to become available...");
-                // Stay at counter and check again next frame
-                // We'll re-enter placing state via the Idle->scan->pickup flow won't work here
-                // So we need a wait state or re-check periodically
-                _currentState = NPCState.Idle; // Will scan and realize it's holding items
+                // Stay in placing state, will retry next frame
+                return;
             }
             else
             {
-                _currentState = NPCState.Idle;
+                // All items placed, wait for checkout
+                DebugLog("[NPC] All items placed, waiting for checkout");
+                _currentState = NPCState.WaitingForCheckout;
             }
         }
         else
         {
             Debug.LogWarning("[NPC] Place failed - no items held");
-            _currentState = NPCState.Idle;
+            _currentState = NPCState.WaitingForCheckout; // Still wait for checkout even if no items
         }
     }
 
