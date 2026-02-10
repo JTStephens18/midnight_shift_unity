@@ -96,9 +96,10 @@ public class ObjectPickup : MonoBehaviour
                 // Place from inventory box onto shelf
                 ItemPlacementManager.Instance.TryPlaceFromBox();
             }
-            else if (_currentPlaceable != null && _currentPlaceable.CanPlaceItem(_heldObject))
+            // Place on shelf instead of dropping
+            // BUT: Don't place the inventory box itself on a shelf (that's accidental)
+            else if (_currentPlaceable != null && _currentPlaceable.CanPlaceItem(_heldObject) && !_isHoldingInventoryBox)
             {
-                // Place on shelf instead of dropping
                 PlaceOnShelf();
             }
             else if (_currentPlaceable != null && !_currentPlaceable.CanPlaceItem(_heldObject))
@@ -188,6 +189,16 @@ public class ObjectPickup : MonoBehaviour
 
     private void PickupObject(GameObject obj, Rigidbody rb, Collider col)
     {
+        // CRITICAL FIX: Check if this item belongs to a ShelfSlot and notify it
+        // The item might be the placed item itself, or a child of it (though usually placed items are the root)
+        // ShelfSlot parents items to itself.
+        ShelfSlot slot = obj.GetComponentInParent<ShelfSlot>();
+        if (slot != null)
+        {
+            // Verify this object is actually tracked by the slot
+            slot.RemoveSpecificItem(obj);
+        }
+
         _heldObject = obj;
         _heldRigidbody = rb;
         _heldCollider = col;

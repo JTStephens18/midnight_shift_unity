@@ -346,7 +346,7 @@ public class ItemPlacementManager : MonoBehaviour
 
         Ray ray = new Ray(_playerCamera.transform.position, _playerCamera.transform.forward);
 
-        if (Physics.Raycast(ray, out RaycastHit hit, shelfDetectionRange))
+        if (Physics.Raycast(ray, out RaycastHit hit, shelfDetectionRange, shelfLayerMask))
         {
             ShelfSlot slot = hit.collider.GetComponent<ShelfSlot>();
             if (slot == null)
@@ -404,12 +404,12 @@ public class ItemPlacementManager : MonoBehaviour
         Vector3 worldPos = _targetSlot.transform.TransformPoint(placement.positionOffset);
 
         // Calculate rotation including category offset
-        Vector3 rotationOffset = placement.rotationOffset;
+        // Calculate rotation: slot offset * category offset
+        Quaternion worldRot = _targetSlot.transform.rotation * Quaternion.Euler(placement.rotationOffset);
         if (category != null)
         {
-            rotationOffset += category.shelfRotationOffset;
+            worldRot *= Quaternion.Euler(category.shelfRotationOffset);
         }
-        Quaternion worldRot = _targetSlot.transform.rotation * Quaternion.Euler(rotationOffset);
 
         // Create or update ghost preview
         if (_ghostPreviewInstance == null)

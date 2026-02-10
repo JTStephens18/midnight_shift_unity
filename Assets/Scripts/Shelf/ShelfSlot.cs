@@ -297,15 +297,17 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
         item.transform.SetParent(transform);
         item.transform.localPosition = placement.positionOffset;
 
-        // Calculate total rotation: slot offset + category offset (if any)
-        Vector3 totalRotation = placement.rotationOffset;
+        // Calculate total rotation: slot offset * category offset
+        Quaternion placementRot = Quaternion.Euler(placement.rotationOffset);
+        Quaternion categoryRot = Quaternion.identity;
+
         InteractableItem interactable = item.GetComponent<InteractableItem>();
         if (interactable != null && interactable.ItemCategory != null)
         {
-            totalRotation += interactable.ItemCategory.shelfRotationOffset;
+            categoryRot = Quaternion.Euler(interactable.ItemCategory.shelfRotationOffset);
         }
 
-        item.transform.localRotation = Quaternion.Euler(totalRotation);
+        item.transform.localRotation = placementRot * categoryRot;
 
         // Configure physics for completely static placement
         Rigidbody rb = item.GetComponent<Rigidbody>();
@@ -364,6 +366,84 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
         }
 
         return item;
+    }
+
+    /// <summary>
+    /// Removes a specific item from the slot (e.g. when picked up by player).
+    /// Shifts remaining items to fill the gap.
+    /// </summary>
+    public void RemoveSpecificItem(GameObject item)
+    {
+        int index = -1;
+
+        // Find the index of the item
+        for (int i = 0; i < itemPlacements.Count; i++)
+        {
+            if (itemPlacements[i].placedItem == item)
+            {
+                index = i;
+                break;
+            }
+        }
+
+        if (index == -1)
+        {
+            Debug.LogWarning($"[ShelfSlot] RemoveSpecificItem: Item '{item.name}' not found in slot '{gameObject.name}'");
+            return;
+        }
+
+        Debug.Log($"[ShelfSlot] Removing item '{item.name}' from index {index}");
+
+        // Unparent the item
+        item.transform.SetParent(null);
+
+        // Re-enable physics
+        Rigidbody rb = item.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.constraints = RigidbodyConstraints.None;
+            rb.isKinematic = false;
+            rb.useGravity = true;
+        }
+
+        // Shift items down to fill the gap
+        // We need to move item at index+1 to index, index+2 to index+1, etc.
+        // The last filled spot (currentItemCount-1) becomes null.
+
+        for (int i = index; i < currentItemCount - 1; i++)
+        {
+            // Move item from i+1 to i
+            GameObject nextItem = itemPlacements[i + 1].placedItem;
+            itemPlacements[i].placedItem = nextItem;
+
+            if (nextItem != null)
+            {
+                // Update transform to new position
+                ItemPlacement placement = itemPlacements[i];
+                nextItem.transform.localPosition = placement.positionOffset;
+
+                // Recalculate rotation for new position
+                Quaternion placementRot = Quaternion.Euler(placement.rotationOffset);
+                Quaternion categoryRot = Quaternion.identity;
+
+                InteractableItem interactable = nextItem.GetComponent<InteractableItem>();
+                if (interactable != null && interactable.ItemCategory != null)
+                {
+                    categoryRot = Quaternion.Euler(interactable.ItemCategory.shelfRotationOffset);
+                }
+
+                nextItem.transform.localRotation = placementRot * categoryRot;
+            }
+        }
+
+        // Clear the last occupied slot
+        if (currentItemCount > 0)
+        {
+            itemPlacements[currentItemCount - 1].placedItem = null;
+            currentItemCount--;
+        }
+
+        Debug.Log($"[ShelfSlot] RemoveSpecificItem complete. Slot count now {currentItemCount}");
     }
 
     /// <summary>
