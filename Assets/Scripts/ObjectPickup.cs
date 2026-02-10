@@ -405,46 +405,22 @@ public class ObjectPickup : MonoBehaviour
         InteractableItem newItem = null;
         CounterSlot newSlot = null;
 
-        if (Physics.Raycast(ray, out RaycastHit hit, pickupRange, pickupLayerMask))
+        // Ignore triggers (CounterSlot itself) so we can raycast through it to hit specific items
+        if (Physics.Raycast(ray, out RaycastHit hit, pickupRange, pickupLayerMask, QueryTriggerInteraction.Ignore))
         {
-            // First, check if we directly hit a CounterSlot
-            CounterSlot slot = hit.collider.GetComponent<CounterSlot>();
-            if (slot != null)
-            {
-                // We hit the slot's collider - get the first item in this slot
-                if (slot.HasItems)
-                {
-                    foreach (var placement in slot.ItemPlacements)
-                    {
-                        if (placement.placedItem != null)
-                        {
-                            InteractableItem item = placement.placedItem.GetComponent<InteractableItem>();
-                            if (item != null)
-                            {
-                                newItem = item;
-                                newSlot = slot;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            else
-            {
-                // Check if we hit an interactable item directly
-                InteractableItem item = hit.collider.GetComponent<InteractableItem>();
-                if (item == null)
-                    item = hit.collider.GetComponentInParent<InteractableItem>();
+            // Check if we hit an interactable item directly
+            InteractableItem item = hit.collider.GetComponent<InteractableItem>();
+            if (item == null)
+                item = hit.collider.GetComponentInParent<InteractableItem>();
 
-                if (item != null)
+            if (item != null)
+            {
+                // Check if this item is parented to a counter slot
+                CounterSlot parentSlot = item.transform.parent?.GetComponent<CounterSlot>();
+                if (parentSlot != null)
                 {
-                    // Check if this item is parented to a counter slot
-                    CounterSlot parentSlot = item.transform.parent?.GetComponent<CounterSlot>();
-                    if (parentSlot != null)
-                    {
-                        newItem = item;
-                        newSlot = parentSlot;
-                    }
+                    newItem = item;
+                    newSlot = parentSlot;
                 }
             }
         }
