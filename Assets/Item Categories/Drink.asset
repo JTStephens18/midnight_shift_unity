@@ -13,3 +13,4 @@ MonoBehaviour:
   m_Name: Drink
   m_EditorClassIdentifier: 
   description: 
+  shelfRotationOffset: {x: -90, y: 0, z: -90}

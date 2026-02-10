@@ -402,7 +402,14 @@ public class ItemPlacementManager : MonoBehaviour
 
         ItemPlacement placement = _targetSlot.ItemPlacements[nextIndex];
         Vector3 worldPos = _targetSlot.transform.TransformPoint(placement.positionOffset);
-        Quaternion worldRot = _targetSlot.transform.rotation * Quaternion.Euler(placement.rotationOffset);
+
+        // Calculate rotation including category offset
+        Vector3 rotationOffset = placement.rotationOffset;
+        if (category != null)
+        {
+            rotationOffset += category.shelfRotationOffset;
+        }
+        Quaternion worldRot = _targetSlot.transform.rotation * Quaternion.Euler(rotationOffset);
 
         // Create or update ghost preview
         if (_ghostPreviewInstance == null)

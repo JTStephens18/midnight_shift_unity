@@ -296,7 +296,16 @@ public class ShelfSlot : MonoBehaviour, IPlaceable
         // Parent first, then set local transforms for precise control
         item.transform.SetParent(transform);
         item.transform.localPosition = placement.positionOffset;
-        item.transform.localRotation = Quaternion.Euler(placement.rotationOffset);
+
+        // Calculate total rotation: slot offset + category offset (if any)
+        Vector3 totalRotation = placement.rotationOffset;
+        InteractableItem interactable = item.GetComponent<InteractableItem>();
+        if (interactable != null && interactable.ItemCategory != null)
+        {
+            totalRotation += interactable.ItemCategory.shelfRotationOffset;
+        }
+
+        item.transform.localRotation = Quaternion.Euler(totalRotation);
 
         // Configure physics for completely static placement
         Rigidbody rb = item.GetComponent<Rigidbody>();
