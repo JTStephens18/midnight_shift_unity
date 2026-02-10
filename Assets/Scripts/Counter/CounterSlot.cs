@@ -215,7 +215,18 @@ public class CounterSlot : MonoBehaviour, IPlaceable
         // Parent and position
         item.transform.SetParent(transform);
         item.transform.localPosition = placement.positionOffset;
-        item.transform.localRotation = Quaternion.Euler(placement.rotationOffset);
+
+        // Calculate rotation including category offset
+        Quaternion placementRot = Quaternion.Euler(placement.rotationOffset);
+        Quaternion categoryRot = Quaternion.identity;
+
+        InteractableItem interactable = item.GetComponent<InteractableItem>();
+        if (interactable != null && interactable.ItemCategory != null)
+        {
+            categoryRot = Quaternion.Euler(interactable.ItemCategory.shelfRotationOffset);
+        }
+
+        item.transform.localRotation = placementRot * categoryRot;
 
         // Make item static (kinematic)
         Rigidbody rb = item.GetComponent<Rigidbody>();
@@ -254,7 +265,18 @@ public class CounterSlot : MonoBehaviour, IPlaceable
                     if (itemPlacements[j].placedItem != null)
                     {
                         itemPlacements[j].placedItem.transform.localPosition = itemPlacements[j].positionOffset;
-                        itemPlacements[j].placedItem.transform.localRotation = Quaternion.Euler(itemPlacements[j].rotationOffset);
+
+                        // Calculate rotation including category offset
+                        Quaternion placementRot = Quaternion.Euler(itemPlacements[j].rotationOffset);
+                        Quaternion categoryRot = Quaternion.identity;
+
+                        InteractableItem interactable = itemPlacements[j].placedItem.GetComponent<InteractableItem>();
+                        if (interactable != null && interactable.ItemCategory != null)
+                        {
+                            categoryRot = Quaternion.Euler(interactable.ItemCategory.shelfRotationOffset);
+                        }
+
+                        itemPlacements[j].placedItem.transform.localRotation = placementRot * categoryRot;
                     }
                 }
                 itemPlacements[_currentItemCount - 1].placedItem = null;
