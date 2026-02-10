@@ -56,21 +56,39 @@ public class CashRegister : MonoBehaviour
 
     private void TriggerCheckout()
     {
-        // Find nearby NPCs
-        Collider[] hitColliders = Physics.OverlapSphere(transform.position, npcDetectionRadius, npcLayerMask);
+        // Find all NPCs in the scene directly (bypassing physics/layers)
+        NPCInteractionController[] allNPCs = FindObjectsOfType<NPCInteractionController>();
         NPCInteractionController bestCandidate = null;
         float closestDist = float.MaxValue;
 
-        foreach (var col in hitColliders)
+        Debug.Log($"[CashRegister] TriggerCheckout: Found {allNPCs.Length} NPCs in scene via FindObjectsOfType.");
+
+        foreach (var npc in allNPCs)
         {
-            NPCInteractionController npc = col.GetComponent<NPCInteractionController>();
-            if (npc != null && !npc.HasCheckedOut())
+            if (npc != null)
             {
-                float dist = Vector3.Distance(transform.position, npc.transform.position);
-                if (dist < closestDist)
+                if (!npc.HasCheckedOut())
                 {
-                    closestDist = dist;
-                    bestCandidate = npc;
+                    float dist = Vector3.Distance(transform.position, npc.transform.position);
+                    Debug.Log($"[CashRegister] Candidate: {npc.name} (Distance: {dist:F2}m)");
+
+                    // Check if within detection radius
+                    if (dist <= npcDetectionRadius)
+                    {
+                        if (dist < closestDist)
+                        {
+                            closestDist = dist;
+                            bestCandidate = npc;
+                        }
+                    }
+                    else
+                    {
+                        Debug.Log($"[CashRegister] NPC {npc.name} is too far ({dist:F2}m > {npcDetectionRadius}m).");
+                    }
+                }
+                else
+                {
+                    Debug.Log($"[CashRegister] Ignoring NPC {npc.name}: Already checked out.");
                 }
             }
         }
