@@ -16,6 +16,13 @@ public class CashRegister : MonoBehaviour
     [Tooltip("Layer mask for the register. Leave as default to detect this object.")]
     [SerializeField] private LayerMask registerLayer = ~0;
 
+    [Header("NPC Detection")]
+    [Tooltip("Radius to check for NPCs at the counter.")]
+    [SerializeField] private float npcDetectionRadius = 5f;
+
+    [Tooltip("Layer mask to detect NPCs.")]
+    [SerializeField] private LayerMask npcLayerMask;
+
     private Camera _playerCamera;
 
     void Start()
@@ -49,49 +56,33 @@ public class CashRegister : MonoBehaviour
 
     private void TriggerCheckout()
     {
-        // Check if queue manager exists
-        if (CheckoutQueueManager.Instance == null)
+        // Find nearby NPCs
+        Collider[] hitColliders = Physics.OverlapSphere(transform.position, npcDetectionRadius, npcLayerMask);
+        NPCInteractionController bestCandidate = null;
+        float closestDist = float.MaxValue;
+
+        foreach (var col in hitColliders)
         {
-            Debug.LogWarning("[CashRegister] No CheckoutQueueManager found! Please add one to the scene.");
-            return;
+            NPCInteractionController npc = col.GetComponent<NPCInteractionController>();
+            if (npc != null && !npc.HasCheckedOut())
+            {
+                float dist = Vector3.Distance(transform.position, npc.transform.position);
+                if (dist < closestDist)
+                {
+                    closestDist = dist;
+                    bestCandidate = npc;
+                }
+            }
         }
 
-        // Block checkout if counter has items
-        if (!CheckoutQueueManager.Instance.IsCounterClear())
+        if (bestCandidate != null)
         {
-            Debug.Log("[CashRegister] Cannot checkout - counter still has items! Remove all items first.");
-            // TODO: Could trigger a UI message or sound here
-            return;
-        }
-
-        // Get the NPC currently at counter
-        NPCInteractionController npcAtCounter = CheckoutQueueManager.Instance.CurrentlyAtCounter;
-
-        if (npcAtCounter != null)
-        {
-            if (!npcAtCounter.HasCheckedOut())
-            {
-                Debug.Log($"[CashRegister] Processing checkout for NPC: {npcAtCounter.name}");
-                npcAtCounter.TriggerCheckout();
-            }
-            else
-            {
-                Debug.Log("[CashRegister] NPC already checked out");
-            }
+            Debug.Log($"[CashRegister] Processing checkout for NPC: {bestCandidate.name}");
+            bestCandidate.TriggerCheckout();
         }
         else
         {
-            Debug.Log("[CashRegister] No NPC at counter to checkout");
+            Debug.Log("[CashRegister] No eligible NPC found near counter to checkout.");
         }
-    }
-
-    /// <summary>
-    /// Check if checkout is currently possible.
-    /// </summary>
-    public bool CanCheckout()
-    {
-        if (CheckoutQueueManager.Instance == null) return false;
-        return CheckoutQueueManager.Instance.IsCounterClear() &&
-               CheckoutQueueManager.Instance.CurrentlyAtCounter != null;
     }
 }

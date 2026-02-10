@@ -82,9 +82,8 @@ public class NPCInteractionController : MonoBehaviour
     public event System.Action OnPlaceStart;
 
     // States for the interaction flow
-    private enum NPCState { Idle, MovingToItem, WaitingAtItem, PickingUp, WaitingInQueue, MovingToCounter, PlacingItem, WaitingForCheckout, MovingToExit }
+    private enum NPCState { Idle, MovingToItem, WaitingAtItem, PickingUp, MovingToCounter, PlacingItem, WaitingForCheckout, MovingToExit }
     private NPCState _currentState = NPCState.Idle;
-    private int _queuePosition = -1; // Current position in checkout queue
 
     /// <summary>
     /// Helper method for conditional debug logging.
@@ -118,10 +117,6 @@ public class NPCInteractionController : MonoBehaviour
 
             case NPCState.PickingUp:
                 HandlePickupState();
-                break;
-
-            case NPCState.WaitingInQueue:
-                HandleWaitingInQueueState();
                 break;
 
             case NPCState.MovingToCounter:
@@ -165,9 +160,6 @@ public class NPCInteractionController : MonoBehaviour
             }
             return;
         }
-
-        // Note: Counter delivery is now handled by the queue system after pickup
-        // NPCs with full batches enqueue and wait in WaitingInQueue state
 
         if (!autoScan || !isCollecting) return;
 
@@ -305,26 +297,16 @@ public class NPCInteractionController : MonoBehaviour
 
         if (shouldCheckout)
         {
-            // Enqueue for checkout instead of going directly to counter
-            if (CheckoutQueueManager.Instance != null)
+            if (counterSlots.Count > 0)
             {
-                DebugLog($"[NPC] Batch full with {_heldItems.Count} items, joining checkout queue");
-                CheckoutQueueManager.Instance.EnqueueForCheckout(this);
-                _currentState = NPCState.WaitingInQueue;
+                DebugLog($"[NPC] Batch full with {_heldItems.Count} items, heading to counter.");
+                _agent.SetDestination(counterSlots[0].Position);
+                _currentState = NPCState.MovingToCounter;
             }
             else
             {
-                // Fallback if no queue manager - go directly to counter (legacy behavior)
-                Debug.LogWarning("[NPC] No CheckoutQueueManager found! Using legacy counter logic.");
-                if (counterSlots.Count > 0)
-                {
-                    _agent.SetDestination(counterSlots[0].Position);
-                    _currentState = NPCState.MovingToCounter;
-                }
-                else
-                {
-                    _currentState = NPCState.Idle;
-                }
+                Debug.LogWarning("[NPC] No counter slots assigned!");
+                _currentState = NPCState.Idle; // Or some fallback state
             }
         }
         else if (_heldItems.Count < batchSize && isCollecting)
@@ -374,25 +356,6 @@ public class NPCInteractionController : MonoBehaviour
     }
 
     /// <summary>
-    /// Waiting in queue state: NPC waits at their queue position until it's their turn.
-    /// </summary>
-    private void HandleWaitingInQueueState()
-    {
-        // Queue manager will call OnTurnToPlaceItems when it's our turn
-        // For now, just move to our queue position
-        if (CheckoutQueueManager.Instance != null && _queuePosition >= 0)
-        {
-            Vector3 waitPosition = CheckoutQueueManager.Instance.GetQueueWaitPosition(_queuePosition);
-            float distanceToPosition = Vector3.Distance(transform.position, waitPosition);
-
-            if (distanceToPosition > _agent.stoppingDistance * 2)
-            {
-                _agent.SetDestination(waitPosition);
-            }
-        }
-    }
-
-    /// <summary>
     /// Waiting for checkout state: NPC has placed items and waits for player to process checkout.
     /// </summary>
     private void HandleWaitingForCheckoutState()
@@ -401,12 +364,6 @@ public class NPCInteractionController : MonoBehaviour
         // If checkout was triggered, _hasCheckedOut will be set and we'll go to exit next update
         if (_hasCheckedOut)
         {
-            // Notify queue manager that we're done
-            if (CheckoutQueueManager.Instance != null)
-            {
-                CheckoutQueueManager.Instance.OnCheckoutComplete(this);
-            }
-
             // Head to exit
             if (exitPoint != null)
             {
@@ -420,34 +377,6 @@ public class NPCInteractionController : MonoBehaviour
                 Destroy(gameObject);
             }
         }
-    }
-
-    /// <summary>
-    /// Called by CheckoutQueueManager when it's this NPC's turn to place items at counter.
-    /// </summary>
-    public void OnTurnToPlaceItems()
-    {
-        DebugLog("[NPC] It's my turn! Moving to counter to place items.");
-
-        if (counterSlots.Count > 0)
-        {
-            _agent.SetDestination(counterSlots[0].Position);
-            _currentState = NPCState.MovingToCounter;
-        }
-        else
-        {
-            Debug.LogWarning("[NPC] No counter slots assigned!");
-            _currentState = NPCState.Idle;
-        }
-    }
-
-    /// <summary>
-    /// Called by CheckoutQueueManager to update this NPC's position in the queue.
-    /// </summary>
-    public void UpdateQueuePosition(int position)
-    {
-        _queuePosition = position;
-        DebugLog($"[NPC] Queue position updated to {position}");
     }
 
     /// <summary>
