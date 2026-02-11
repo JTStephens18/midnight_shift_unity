@@ -203,7 +203,7 @@ public class ObjectPickup : MonoBehaviour
         _heldObject = obj;
         _heldRigidbody = rb;
         _heldCollider = col;
-        _heldObjectOriginalScale = obj.transform.localScale;
+        _heldObjectOriginalScale = obj.transform.lossyScale;
 
         // Check if this is an inventory box
         _isHoldingInventoryBox = obj.GetComponent<InventoryBox>() != null;
@@ -225,6 +225,18 @@ public class ObjectPickup : MonoBehaviour
             _heldObject.transform.SetParent(_playerCamera.transform);
             _heldObject.transform.localPosition = boxHoldOffset;
             _heldObject.transform.localRotation = Quaternion.Euler(boxHoldRotation);
+
+            // COMPENSATE FOR PARENT SCALE:
+            // If the parent (camera) is scaled, the child inherits it. We need to inverse that scale 
+            // to keep the object looking like its original self.
+            Vector3 parentScale = _playerCamera.transform.lossyScale;
+            Vector3 targetDetails = _heldObjectOriginalScale;
+
+            _heldObject.transform.localScale = new Vector3(
+                targetDetails.x / parentScale.x,
+                targetDetails.y / parentScale.y,
+                targetDetails.z / parentScale.z
+            );
         }
         else
         {
