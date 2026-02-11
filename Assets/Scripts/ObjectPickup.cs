@@ -43,6 +43,7 @@ public class ObjectPickup : MonoBehaviour
     private DeliveryStation _currentDeliveryStation;
     private InteractableItem _currentCounterItem;
     private CounterSlot _currentCounterItemSlot;
+    private Vector3 _heldObjectOriginalScale = Vector3.one;
 
     void Start()
     {
@@ -202,6 +203,7 @@ public class ObjectPickup : MonoBehaviour
         _heldObject = obj;
         _heldRigidbody = rb;
         _heldCollider = col;
+        _heldObjectOriginalScale = obj.transform.localScale;
 
         // Check if this is an inventory box
         _isHoldingInventoryBox = obj.GetComponent<InventoryBox>() != null;
@@ -241,6 +243,7 @@ public class ObjectPickup : MonoBehaviour
             {
                 // Unparent and re-enable physics for inventory box
                 _heldObject.transform.SetParent(null);
+                _heldObject.transform.localScale = _heldObjectOriginalScale;
 
                 if (_heldCollider != null)
                     _heldCollider.enabled = true;
@@ -271,6 +274,7 @@ public class ObjectPickup : MonoBehaviour
             {
                 // Unparent and re-enable physics for inventory box
                 _heldObject.transform.SetParent(null);
+                _heldObject.transform.localScale = _heldObjectOriginalScale;
 
                 if (_heldCollider != null)
                     _heldCollider.enabled = true;
@@ -301,6 +305,7 @@ public class ObjectPickup : MonoBehaviour
             {
                 // Unparent and re-enable physics for inventory box
                 _heldObject.transform.SetParent(null);
+                _heldObject.transform.localScale = _heldObjectOriginalScale;
 
                 if (_heldCollider != null)
                     _heldCollider.enabled = true;
