@@ -13,3 +13,4 @@ MonoBehaviour:
   m_Name: Food
   m_EditorClassIdentifier: 
   description: 
+  shelfRotationOffset: {x: -90, y: 0, z: 0}
