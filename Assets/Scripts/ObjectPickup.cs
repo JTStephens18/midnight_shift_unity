@@ -4,7 +4,6 @@ public class ObjectPickup : MonoBehaviour
 {
     [Header("Pickup Settings")]
     [SerializeField] private float pickupRange = 3f;
-    [SerializeField] private float holdDistance = 1.2f;
     [SerializeField] private float pickupSmoothSpeed = 10f;
     [SerializeField] private KeyCode interactKey = KeyCode.E;
 
@@ -15,20 +14,14 @@ public class ObjectPickup : MonoBehaviour
     [Header("Place Settings")]
     [SerializeField] private KeyCode placeKey = KeyCode.G;
 
-    [Header("Distance Control")]
-    [SerializeField] private float scrollSpeed = 0.5f;
-    [SerializeField] private float minHoldDistance = 0.5f;
-    [SerializeField] private float maxHoldDistance = 4f;
+    [Header("Default Hold Position (bottom-right of view)")]
+    [Tooltip("Default local position offset when held (used if object has no HoldableItem component).")]
+    [SerializeField] private Vector3 defaultHoldOffset = new Vector3(0.3f, -0.3f, 0.6f);
+    [Tooltip("Default local rotation (euler angles) when held.")]
+    [SerializeField] private Vector3 defaultHoldRotation = new Vector3(10f, -15f, 0f);
 
     [Header("References")]
-    [SerializeField] private Transform holdPoint;
     [SerializeField] private LayerMask pickupLayerMask = ~0; // Default to all layers
-
-    [Header("Inventory Box Fixed Position")]
-    [Tooltip("Local position offset for inventory box when held (fixed in front of camera).")]
-    [SerializeField] private Vector3 boxHoldOffset = new Vector3(0.3f, -0.3f, 0.6f);
-    [Tooltip("Local rotation for inventory box when held (euler angles).")]
-    [SerializeField] private Vector3 boxHoldRotation = new Vector3(10f, -15f, 0f);
 
     [Header("Debug")]
     [SerializeField] private bool showDebugRay = true;
@@ -37,7 +30,6 @@ public class ObjectPickup : MonoBehaviour
     private GameObject _heldObject;
     private Rigidbody _heldRigidbody;
     private Collider _heldCollider;
-    private float _currentHoldDistance;
     private IPlaceable _currentPlaceable;
     private bool _isHoldingInventoryBox = false;
     private DeliveryStation _currentDeliveryStation;
@@ -52,17 +44,6 @@ public class ObjectPickup : MonoBehaviour
         {
             _playerCamera = Camera.main;
         }
-
-        // Create a hold point if one wasn't assigned
-        if (holdPoint == null)
-        {
-            GameObject holdPointObj = new GameObject("HoldPoint");
-            holdPoint = holdPointObj.transform;
-            holdPoint.SetParent(_playerCamera.transform);
-            holdPoint.localPosition = new Vector3(0f, 0f, holdDistance);
-        }
-
-        _currentHoldDistance = holdDistance;
     }
 
     void Update()
@@ -130,41 +111,10 @@ public class ObjectPickup : MonoBehaviour
             PlaceObject();
         }
 
-        // Scroll wheel to adjust hold distance
-        if (_heldObject != null)
-        {
-            float scroll = Input.GetAxis("Mouse ScrollWheel");
-            if (scroll != 0f)
-            {
-                _currentHoldDistance += scroll * scrollSpeed;
-                _currentHoldDistance = Mathf.Clamp(_currentHoldDistance, minHoldDistance, maxHoldDistance);
-                holdPoint.localPosition = new Vector3(0f, 0f, _currentHoldDistance);
-            }
-        }
-
         // Show debug ray in Scene view
         if (showDebugRay && _playerCamera != null)
         {
             Debug.DrawRay(_playerCamera.transform.position, _playerCamera.transform.forward * pickupRange, Color.yellow);
-        }
-    }
-
-    void FixedUpdate()
-    {
-        // Skip physics-based holding for inventory box (it's fixed to camera)
-        if (_isHoldingInventoryBox) return;
-
-        // Smoothly move held object to hold point
-        if (_heldObject != null && _heldRigidbody != null)
-        {
-            Vector3 targetPosition = holdPoint.position;
-            Vector3 direction = targetPosition - _heldObject.transform.position;
-
-            // Use velocity-based movement for smoother physics interaction
-            _heldRigidbody.linearVelocity = direction * pickupSmoothSpeed;
-
-            // Optionally, you can also smoothly rotate the object to match camera rotation
-            // _heldRigidbody.MoveRotation(Quaternion.Lerp(_heldRigidbody.rotation, holdPoint.rotation, Time.fixedDeltaTime * pickupSmoothSpeed));
         }
     }
 
@@ -191,12 +141,9 @@ public class ObjectPickup : MonoBehaviour
     private void PickupObject(GameObject obj, Rigidbody rb, Collider col)
     {
         // CRITICAL FIX: Check if this item belongs to a ShelfSlot and notify it
-        // The item might be the placed item itself, or a child of it (though usually placed items are the root)
-        // ShelfSlot parents items to itself.
         ShelfSlot slot = obj.GetComponentInParent<ShelfSlot>();
         if (slot != null)
         {
-            // Verify this object is actually tracked by the slot
             slot.RemoveSpecificItem(obj);
         }
 
@@ -205,68 +152,66 @@ public class ObjectPickup : MonoBehaviour
         _heldCollider = col;
         _heldObjectOriginalScale = obj.transform.lossyScale;
 
-        // Check if this is an inventory box
+        // Track if this is an inventory box (used by ItemPlacementManager)
         _isHoldingInventoryBox = obj.GetComponent<InventoryBox>() != null;
 
-        if (_isHoldingInventoryBox)
+        // --- Unified hold: all objects are parented to camera at a fixed position ---
+
+        // Clear velocity first, then make kinematic
+        _heldRigidbody.linearVelocity = Vector3.zero;
+        _heldRigidbody.angularVelocity = Vector3.zero;
+        _heldRigidbody.useGravity = false;
+        _heldRigidbody.isKinematic = true;
+
+        // Disable collider to prevent blocking view / physics issues
+        if (_heldCollider != null)
+            _heldCollider.enabled = false;
+
+        // Determine hold offset & rotation (per-object override or defaults)
+        Vector3 holdOffset = defaultHoldOffset;
+        Vector3 holdRotation = defaultHoldRotation;
+
+        HoldableItem holdable = obj.GetComponent<HoldableItem>();
+        if (holdable != null && holdable.useCustomHoldSettings)
         {
-            // Fixed position: Clear velocity first, THEN make kinematic
-            // (Can't set velocity on kinematic bodies)
-            _heldRigidbody.linearVelocity = Vector3.zero;
-            _heldRigidbody.angularVelocity = Vector3.zero;
-            _heldRigidbody.useGravity = false;
-            _heldRigidbody.isKinematic = true;
-
-            // Disable collider to prevent blocking view
-            if (_heldCollider != null)
-                _heldCollider.enabled = false;
-
-            // Parent to camera and set fixed position
-            _heldObject.transform.SetParent(_playerCamera.transform);
-            _heldObject.transform.localPosition = boxHoldOffset;
-            _heldObject.transform.localRotation = Quaternion.Euler(boxHoldRotation);
-
-            // COMPENSATE FOR PARENT SCALE:
-            // If the parent (camera) is scaled, the child inherits it. We need to inverse that scale 
-            // to keep the object looking like its original self.
-            Vector3 parentScale = _playerCamera.transform.lossyScale;
-            Vector3 targetDetails = _heldObjectOriginalScale;
-
-            _heldObject.transform.localScale = new Vector3(
-                targetDetails.x / parentScale.x,
-                targetDetails.y / parentScale.y,
-                targetDetails.z / parentScale.z
-            );
+            holdOffset = holdable.holdOffset;
+            holdRotation = holdable.holdRotation;
         }
-        else
-        {
-            // Normal physics-based holding
-            _heldRigidbody.useGravity = false;
-            _heldRigidbody.freezeRotation = true;
-            _heldRigidbody.interpolation = RigidbodyInterpolation.Interpolate;
-        }
+
+        // Parent to camera and set fixed position
+        _heldObject.transform.SetParent(_playerCamera.transform);
+        _heldObject.transform.localPosition = holdOffset;
+        _heldObject.transform.localRotation = Quaternion.Euler(holdRotation);
+
+        // Compensate for parent scale to keep object looking its original size
+        Vector3 parentScale = _playerCamera.transform.lossyScale;
+        _heldObject.transform.localScale = new Vector3(
+            _heldObjectOriginalScale.x / parentScale.x,
+            _heldObjectOriginalScale.y / parentScale.y,
+            _heldObjectOriginalScale.z / parentScale.z
+        );
+    }
+
+    private void ReleaseHeldObject()
+    {
+        // Shared release logic for drop/throw/place
+        _heldObject.transform.SetParent(null);
+        _heldObject.transform.localScale = _heldObjectOriginalScale;
+
+        if (_heldCollider != null)
+            _heldCollider.enabled = true;
+
+        _heldRigidbody.isKinematic = false;
+        _heldRigidbody.useGravity = true;
+        _heldRigidbody.freezeRotation = false;
+        _heldRigidbody.interpolation = RigidbodyInterpolation.None;
     }
 
     private void DropObject()
     {
         if (_heldRigidbody != null)
         {
-            if (_isHoldingInventoryBox)
-            {
-                // Unparent and re-enable physics for inventory box
-                _heldObject.transform.SetParent(null);
-                _heldObject.transform.localScale = _heldObjectOriginalScale;
-
-                if (_heldCollider != null)
-                    _heldCollider.enabled = true;
-
-                _heldRigidbody.isKinematic = false;
-            }
-
-            // Re-enable gravity and rotation
-            _heldRigidbody.useGravity = true;
-            _heldRigidbody.freezeRotation = false;
-            _heldRigidbody.interpolation = RigidbodyInterpolation.None;
+            ReleaseHeldObject();
 
             // Give it a slight forward velocity when dropping
             _heldRigidbody.linearVelocity = _playerCamera.transform.forward * 2f;
@@ -282,22 +227,7 @@ public class ObjectPickup : MonoBehaviour
     {
         if (_heldRigidbody != null)
         {
-            if (_isHoldingInventoryBox)
-            {
-                // Unparent and re-enable physics for inventory box
-                _heldObject.transform.SetParent(null);
-                _heldObject.transform.localScale = _heldObjectOriginalScale;
-
-                if (_heldCollider != null)
-                    _heldCollider.enabled = true;
-
-                _heldRigidbody.isKinematic = false;
-            }
-
-            // Re-enable gravity and rotation
-            _heldRigidbody.useGravity = true;
-            _heldRigidbody.freezeRotation = false;
-            _heldRigidbody.interpolation = RigidbodyInterpolation.None;
+            ReleaseHeldObject();
 
             // Apply throw force in camera direction
             _heldRigidbody.linearVelocity = _playerCamera.transform.forward * throwForce;
@@ -313,22 +243,7 @@ public class ObjectPickup : MonoBehaviour
     {
         if (_heldRigidbody != null)
         {
-            if (_isHoldingInventoryBox)
-            {
-                // Unparent and re-enable physics for inventory box
-                _heldObject.transform.SetParent(null);
-                _heldObject.transform.localScale = _heldObjectOriginalScale;
-
-                if (_heldCollider != null)
-                    _heldCollider.enabled = true;
-
-                _heldRigidbody.isKinematic = false;
-            }
-
-            // Re-enable gravity and rotation
-            _heldRigidbody.useGravity = true;
-            _heldRigidbody.freezeRotation = false;
-            _heldRigidbody.interpolation = RigidbodyInterpolation.None;
+            ReleaseHeldObject();
 
             // Set velocity to zero for a gentle placement
             _heldRigidbody.linearVelocity = Vector3.zero;
@@ -489,6 +404,15 @@ public class ObjectPickup : MonoBehaviour
             _heldRigidbody.angularVelocity = Vector3.zero;
         }
 
+        // Unparent before placing so the shelf can re-parent
+        _heldObject.transform.SetParent(null);
+        _heldObject.transform.localScale = _heldObjectOriginalScale;
+
+        if (_heldCollider != null)
+            _heldCollider.enabled = true;
+
+        _heldRigidbody.isKinematic = false;
+
         // Place the item
         if (_currentPlaceable.TryPlaceItem(_heldObject))
         {
@@ -496,7 +420,13 @@ public class ObjectPickup : MonoBehaviour
             _heldObject = null;
             _heldRigidbody = null;
             _heldCollider = null;
+            _isHoldingInventoryBox = false;
             _currentPlaceable = null;
+        }
+        else
+        {
+            // Placement failed — re-pickup the object
+            PickupObject(_heldObject, _heldRigidbody, _heldCollider);
         }
     }
 

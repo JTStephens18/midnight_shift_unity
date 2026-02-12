@@ -14,6 +14,7 @@ GameObject:
   - component: {fileID: 291277678985675761}
   - component: {fileID: 8225091496015483073}
   - component: {fileID: 8309873282321932969}
+  - component: {fileID: -9158606883687699582}
   m_Layer: 7
   m_Name: BeerBottle
   m_TagString: Untagged
@@ -155,6 +156,21 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   grabTarget: {fileID: 1249138812348040522}
   itemCategory: {fileID: 11400000, guid: 7a61a5212697c7d4e90aa95a56ba5b43, type: 2}
+--- !u!114 &-9158606883687699582
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6114474387162918293}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3cd61fca3cda91e4e98a9f3a8404beeb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  useCustomHoldSettings: 1
+  holdOffset: {x: 0, y: 0, z: 0}
+  holdRotation: {x: 10, y: -15, z: 0}
 --- !u!1 &7520516111006905247
 GameObject:
   m_ObjectHideFlags: 0
