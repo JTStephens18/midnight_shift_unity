@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: 36e9ca09370155f4d970581da4c4c6f0
+guid: dec30887d070b0a40b456cbdd233cf9d
 ModelImporter:
   serializedVersion: 22200
   internalIDToNameTable: []
@@ -7,18 +7,18 @@ ModelImporter:
   - first:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
-      name: Black
-    second: {fileID: 2100000, guid: b1d5d1cb1bc5db44bbbe8c5fb1026200, type: 2}
+      name: CapTexture
+    second: {fileID: 2100000, guid: d42a66946ea1998419548fd5b2d0f533, type: 2}
   - first:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
-      name: PerforatedBackground
-    second: {fileID: 2100000, guid: 47f5b289efbb6424bb2c9e312ae5c0fd, type: 2}
+      name: WaterColor1
+    second: {fileID: 2100000, guid: 77fe92a528328b34facb8bcd1c060865, type: 2}
   - first:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
-      name: ShelfColor
-    second: {fileID: 2100000, guid: 56c68dd02f5534447b21c7b2f332a231, type: 2}
+      name: WaterLabel1
+    second: {fileID: 2100000, guid: 1b500e3d038b5c0468ae9cf5f279c85f, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0
