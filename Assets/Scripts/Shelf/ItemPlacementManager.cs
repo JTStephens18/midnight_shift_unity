@@ -232,8 +232,8 @@ public class ItemPlacementManager : MonoBehaviour
         _itemQueue.Clear();
         _itemQueue.AddRange(lockedItems);
 
-        // Fill the rest from the weighted pool (randomly)
-        // Remove locked items from the pool so we don't double-count
+        // Fill remaining slots using streak runs:
+        // Categories with more missing slots get longer consecutive runs (2-3).
         List<ItemCategory> availablePool = new List<ItemCategory>(weightedPool);
         foreach (ItemCategory locked in lockedItems)
         {
@@ -241,19 +241,43 @@ public class ItemPlacementManager : MonoBehaviour
             availablePool.Remove(locked);
         }
 
-        // Fill remaining slots
-        int slotsToFill = Mathf.Min(availablePool.Count, remaining - _itemQueue.Count);
-        for (int i = 0; i < slotsToFill; i++)
+        int maxToFill = remaining - _itemQueue.Count;
+        while (availablePool.Count > 0 && _itemQueue.Count < remaining && maxToFill > 0)
         {
+            // Pick a random category from the weighted pool
             int randomIndex = Random.Range(0, availablePool.Count);
-            _itemQueue.Add(availablePool[randomIndex]);
-            availablePool.RemoveAt(randomIndex);
-        }
+            ItemCategory picked = availablePool[randomIndex];
 
-        // Trim queue to box remaining count
-        if (_itemQueue.Count > remaining)
-        {
-            _itemQueue.RemoveRange(remaining, _itemQueue.Count - remaining);
+            // Count how many of this category remain in the pool
+            int availableCount = 0;
+            foreach (ItemCategory cat in availablePool)
+            {
+                if (cat == picked) availableCount++;
+            }
+
+            // Determine run length based on availability:
+            //   >= 3 available → run of 2-3
+            //   == 2 available → run of 1-2
+            //   == 1 available → run of 1
+            int runLength;
+            if (availableCount >= 3)
+                runLength = Random.Range(2, 4); // 2 or 3
+            else if (availableCount == 2)
+                runLength = Random.Range(1, 3); // 1 or 2
+            else
+                runLength = 1;
+
+            // Clamp to what's actually available and remaining capacity
+            runLength = Mathf.Min(runLength, availableCount, remaining - _itemQueue.Count);
+
+            // Add the run to the queue and remove from pool
+            for (int j = 0; j < runLength; j++)
+            {
+                _itemQueue.Add(picked);
+                availablePool.Remove(picked); // removes first occurrence
+            }
+
+            maxToFill -= runLength;
         }
 
         if (logStateChanges)
