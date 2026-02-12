@@ -155,7 +155,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   grabTarget: {fileID: 8696419702758436779}
-  itemCategory: {fileID: 11400000, guid: 7a61a5212697c7d4e90aa95a56ba5b43, type: 2}
+  itemCategory: {fileID: 11400000, guid: 09e540a0cab9cdf4582328da1a030e51, type: 2}
 --- !u!1 &1254688653179789811
 GameObject:
   m_ObjectHideFlags: 0

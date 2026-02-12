@@ -2,7 +2,8 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Manages the box-to-shelf item placement workflow with proximity-based shelf detection.
+/// Manages the box-to-shelf item placement workflow with multi-shelf detection
+/// and a locked item queue for predictable restocking.
 /// Attach to the player or camera object alongside ObjectPickup.
 /// </summary>
 public class ItemPlacementManager : MonoBehaviour
@@ -18,6 +19,10 @@ public class ItemPlacementManager : MonoBehaviour
 
     [Tooltip("Layer mask for shelf detection.")]
     [SerializeField] private LayerMask shelfLayerMask = ~0;
+
+    [Header("Item Queue")]
+    [Tooltip("Number of items at the front of the queue that are locked and won't change when shelves enter/exit range.")]
+    [SerializeField] private int queueLockCount = 2;
 
     [Header("Ghost Preview")]
     [Tooltip("Material to apply to ghost preview objects (should be semi-transparent).")]
@@ -42,14 +47,16 @@ public class ItemPlacementManager : MonoBehaviour
 
     // Cached references
     private InventoryBox _activeBox;
-    private ShelfSection _nearbyShelf;
+    private List<ShelfSection> _nearbyShelves = new List<ShelfSection>();
     private ShelfSlot _targetSlot;
     private GameObject _ghostPreviewInstance;
     private Camera _playerCamera;
 
-    // Random selection tracking
-    private List<ItemCategory> _currentMissingItems = new List<ItemCategory>();
-    private ItemCategory _randomlySelectedCategory;
+    // Item queue
+    private List<ItemCategory> _itemQueue = new List<ItemCategory>();
+
+    // Track shelf set for change detection
+    private HashSet<ShelfSection> _previousShelfSet = new HashSet<ShelfSection>();
 
     // Singleton for easy access
     public static ItemPlacementManager Instance { get; private set; }
@@ -88,18 +95,27 @@ public class ItemPlacementManager : MonoBehaviour
             return;
         }
 
-        // Detect nearby shelf sections
-        ShelfSection newNearbyShelf = DetectNearbyShelfSection();
-
-        // If shelf changed, recalculate missing items and select random
-        if (newNearbyShelf != _nearbyShelf)
+        // Check if box has any stock at all
+        if (!_activeBox.HasAnyStock())
         {
-            _nearbyShelf = newNearbyShelf;
-            OnShelfProximityChanged();
+            SetState(PlacementState.Disabled, emptyBoxPrompt);
+            ClearGhostPreview();
+            return;
         }
 
-        // If no nearby shelf while holding box
-        if (_nearbyShelf == null)
+        // Detect all nearby shelf sections
+        List<ShelfSection> currentShelves = DetectNearbyShelfSections();
+
+        // Check if the set of nearby shelves has changed
+        if (HasShelfSetChanged(currentShelves))
+        {
+            _nearbyShelves = currentShelves;
+            UpdatePreviousShelfSet();
+            RebuildItemQueue();
+        }
+
+        // If no nearby shelves while holding box
+        if (_nearbyShelves.Count == 0)
         {
             SetState(PlacementState.Idle, string.Empty);
             ClearGhostPreview();
@@ -107,25 +123,30 @@ public class ItemPlacementManager : MonoBehaviour
             return;
         }
 
-        // Check if looking at a specific slot on the nearby shelf
+        // Get the current item to place from the queue
+        ItemCategory nextItem = _itemQueue.Count > 0 ? _itemQueue[0] : null;
+
+        // If no items to place (shelves are fully stocked)
+        if (nextItem == null)
+        {
+            SetState(PlacementState.Disabled, "Shelf is fully stocked");
+            ClearGhostPreview();
+            _targetSlot = null;
+            return;
+        }
+
+        // Check if looking at a specific slot on any nearby shelf
         _targetSlot = GetTargetedShelfSlot();
 
         if (_targetSlot == null)
         {
-            // Near shelf but not aiming at a slot - show what item is selected
-            if (_randomlySelectedCategory != null)
-            {
-                SetState(PlacementState.Idle, $"Aim at slot to place: {_randomlySelectedCategory.name}");
-            }
-            else
-            {
-                SetState(PlacementState.Disabled, "Shelf is fully stocked");
-            }
+            // Near shelf but not aiming at a slot
+            SetState(PlacementState.Idle, $"Aim at slot to place: {nextItem.name}");
             ClearGhostPreview();
             return;
         }
 
-        // Phase I: Validate the targeted slot
+        // Validate the targeted slot
         ItemCategory slotCategory = _targetSlot.AcceptedCategory;
 
         // Check if slot is full
@@ -136,82 +157,95 @@ public class ItemPlacementManager : MonoBehaviour
             return;
         }
 
-        // Check if the randomly selected item matches this slot's category
-        if (slotCategory != null && _randomlySelectedCategory != null && slotCategory != _randomlySelectedCategory)
+        // Check if the next item matches this slot's category
+        if (slotCategory != null && nextItem != slotCategory)
         {
             SetState(PlacementState.Disabled, $"{categoryMismatchPrompt} - needs {slotCategory.name}");
             ClearGhostPreview();
             return;
         }
 
-        // Check if box has stock for this slot's category
-        ItemCategory categoryToPlace = slotCategory ?? _randomlySelectedCategory;
-        if (categoryToPlace != null && !_activeBox.HasStock(categoryToPlace))
-        {
-            SetState(PlacementState.Disabled, $"Out of {categoryToPlace.name} items");
-            ClearGhostPreview();
-            return;
-        }
-
-        // If no category determined, check for any stock
-        if (categoryToPlace == null && !_activeBox.HasAnyStock())
-        {
-            SetState(PlacementState.Disabled, emptyBoxPrompt);
-            ClearGhostPreview();
-            return;
-        }
-
-        // Phase II: Ready for placement
-        CurrentlySelectedCategory = categoryToPlace;
+        // Ready for placement
+        CurrentlySelectedCategory = nextItem;
 
         int currentCount = _targetSlot.CurrentItemCount;
         int maxCount = _targetSlot.MaxItems;
-        string categoryName = categoryToPlace != null ? categoryToPlace.name : "Item";
-        string prompt = $"Press E to Place {categoryName} ({currentCount + 1}/{maxCount})";
+        string prompt = $"Press E to Place {nextItem.name} ({currentCount + 1}/{maxCount})";
 
         SetState(PlacementState.Ready, prompt);
         UpdateGhostPreview();
     }
 
+    #region Item Queue
+
     /// <summary>
-    /// Called when the player enters/exits proximity of a shelf section.
-    /// Recalculates missing items and randomly selects one.
+    /// Rebuilds the item queue based on all missing items from nearby shelves.
+    /// Preserves the first N locked items (where N = min(queueLockCount, current queue size)).
     /// </summary>
-    private void OnShelfProximityChanged()
+    private void RebuildItemQueue()
     {
-        _currentMissingItems.Clear();
-        _randomlySelectedCategory = null;
-        CurrentlySelectedCategory = null;
-
-        if (_nearbyShelf == null || _activeBox == null) return;
-
-        // Get all missing items from the shelf
-        List<ItemCategory> allMissing = _nearbyShelf.GetMissingItems();
-
-        // Filter to only items the box has in stock
-        foreach (ItemCategory category in allMissing)
+        if (_activeBox == null || !_activeBox.HasAnyStock())
         {
-            if (_activeBox.HasStock(category))
-            {
-                _currentMissingItems.Add(category);
-            }
+            _itemQueue.Clear();
+            return;
         }
 
-        // Randomly select one item to place
-        if (_currentMissingItems.Count > 0)
+        // Aggregate missing items from ALL nearby shelves (weighted by empty slot count)
+        List<ItemCategory> weightedPool = new List<ItemCategory>();
+        foreach (ShelfSection shelf in _nearbyShelves)
         {
-            int randomIndex = Random.Range(0, _currentMissingItems.Count);
-            _randomlySelectedCategory = _currentMissingItems[randomIndex];
-
-            if (logStateChanges)
-                Debug.Log($"[ItemPlacementManager] Near shelf '{_nearbyShelf.name}'. Missing {_currentMissingItems.Count} items. Selected: {_randomlySelectedCategory.name}");
+            weightedPool.AddRange(shelf.GetMissingItems());
         }
-        else
+
+        // Determine how many items to lock at the front
+        int lockCount = Mathf.Min(queueLockCount, _itemQueue.Count);
+        int remaining = _activeBox.GetRemainingCount();
+
+        // Preserve locked items
+        List<ItemCategory> lockedItems = new List<ItemCategory>();
+        for (int i = 0; i < lockCount; i++)
         {
-            if (logStateChanges)
-                Debug.Log($"[ItemPlacementManager] Near shelf '{_nearbyShelf.name}' but no placeable items (shelf full or box empty).");
+            lockedItems.Add(_itemQueue[i]);
+        }
+
+        // Rebuild the queue
+        _itemQueue.Clear();
+        _itemQueue.AddRange(lockedItems);
+
+        // Fill the rest from the weighted pool (randomly)
+        // Remove locked items from the pool so we don't double-count
+        List<ItemCategory> availablePool = new List<ItemCategory>(weightedPool);
+        foreach (ItemCategory locked in lockedItems)
+        {
+            // Remove one instance of each locked category from pool
+            availablePool.Remove(locked);
+        }
+
+        // Fill remaining slots
+        int slotsToFill = Mathf.Min(availablePool.Count, remaining - _itemQueue.Count);
+        for (int i = 0; i < slotsToFill; i++)
+        {
+            int randomIndex = Random.Range(0, availablePool.Count);
+            _itemQueue.Add(availablePool[randomIndex]);
+            availablePool.RemoveAt(randomIndex);
+        }
+
+        // Trim queue to box remaining count
+        if (_itemQueue.Count > remaining)
+        {
+            _itemQueue.RemoveRange(remaining, _itemQueue.Count - remaining);
+        }
+
+        if (logStateChanges)
+        {
+            string queueStr = string.Join(", ", _itemQueue.ConvertAll(c => c != null ? c.name : "null"));
+            Debug.Log($"[ItemPlacementManager] Queue rebuilt ({_itemQueue.Count} items, {lockCount} locked): [{queueStr}]");
         }
     }
+
+    #endregion
+
+    #region Placement
 
     /// <summary>
     /// Attempts to place an item from the box onto the targeted shelf slot.
@@ -222,20 +256,18 @@ public class ItemPlacementManager : MonoBehaviour
         if (State != PlacementState.Ready) return false;
         if (_activeBox == null || _targetSlot == null) return false;
 
-        // Determine category to use
         ItemCategory category = CurrentlySelectedCategory;
-
         if (category == null)
         {
             Debug.LogWarning("[ItemPlacementManager] No category selected for placement");
             return false;
         }
 
-        // Get prefab for this category
-        GameObject prefab = _activeBox.GetItemPrefab(category);
+        // Get prefab from the category itself
+        GameObject prefab = category.prefab;
         if (prefab == null)
         {
-            Debug.LogWarning($"[ItemPlacementManager] No prefab found for category {category.name}");
+            Debug.LogWarning($"[ItemPlacementManager] No prefab assigned on ItemCategory '{category.name}'");
             return false;
         }
 
@@ -246,16 +278,19 @@ public class ItemPlacementManager : MonoBehaviour
         if (_targetSlot.TryPlaceItem(itemInstance))
         {
             // Decrement box inventory
-            _activeBox.TryDecrement(category);
+            _activeBox.Decrement();
 
             // Clear ghost preview
             ClearGhostPreview();
 
             if (logStateChanges)
-                Debug.Log($"[ItemPlacementManager] Placed {category.name} on {_targetSlot.gameObject.name}");
+                Debug.Log($"[ItemPlacementManager] Placed {category.name} on {_targetSlot.gameObject.name}. Box remaining: {_activeBox.GetRemainingCount()}");
 
-            // Re-evaluate missing items for this shelf
-            OnShelfProximityChanged();
+            // Dequeue the placed item and rebuild queue
+            if (_itemQueue.Count > 0)
+                _itemQueue.RemoveAt(0);
+
+            RebuildItemQueue();
 
             return true;
         }
@@ -271,6 +306,10 @@ public class ItemPlacementManager : MonoBehaviour
             return false;
         }
     }
+
+    #endregion
+
+    #region Public Accessors
 
     /// <summary>
     /// Returns true if the player is currently holding an InventoryBox and looking at a valid slot.
@@ -289,12 +328,24 @@ public class ItemPlacementManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Returns the currently randomly selected item category to place.
+    /// Returns the currently selected item category (next in queue).
     /// </summary>
     public ItemCategory GetSelectedCategory()
     {
-        return _randomlySelectedCategory;
+        return _itemQueue.Count > 0 ? _itemQueue[0] : null;
     }
+
+    /// <summary>
+    /// Returns a read-only view of the upcoming item queue.
+    /// </summary>
+    public IReadOnlyList<ItemCategory> GetItemQueue()
+    {
+        return _itemQueue.AsReadOnly();
+    }
+
+    #endregion
+
+    #region Detection
 
     private InventoryBox GetHeldInventoryBox()
     {
@@ -306,19 +357,22 @@ public class ItemPlacementManager : MonoBehaviour
         return heldObject.GetComponent<InventoryBox>();
     }
 
-    private ShelfSection DetectNearbyShelfSection()
+    /// <summary>
+    /// Detects ALL shelf sections within range and returns them sorted by distance.
+    /// </summary>
+    private List<ShelfSection> DetectNearbyShelfSections()
     {
-        if (_playerCamera == null) return null;
+        if (_playerCamera == null) return new List<ShelfSection>();
 
-        // Use overlap sphere to find nearby shelf sections
         Collider[] colliders = Physics.OverlapSphere(
             _playerCamera.transform.position,
             shelfDetectionRange,
             shelfLayerMask
         );
 
-        ShelfSection nearestShelf = null;
-        float nearestDistance = float.MaxValue;
+        // Use a set to avoid duplicates (multiple colliders on same shelf)
+        HashSet<ShelfSection> shelfSet = new HashSet<ShelfSection>();
+        List<ShelfSection> shelves = new List<ShelfSection>();
 
         foreach (Collider col in colliders)
         {
@@ -326,18 +380,40 @@ public class ItemPlacementManager : MonoBehaviour
             if (section == null)
                 section = col.GetComponentInParent<ShelfSection>();
 
-            if (section != null)
+            if (section != null && shelfSet.Add(section))
             {
-                float distance = Vector3.Distance(_playerCamera.transform.position, section.transform.position);
-                if (distance < nearestDistance)
-                {
-                    nearestDistance = distance;
-                    nearestShelf = section;
-                }
+                shelves.Add(section);
             }
         }
 
-        return nearestShelf;
+        // Sort by distance for consistent ordering
+        Vector3 camPos = _playerCamera.transform.position;
+        shelves.Sort((a, b) =>
+            Vector3.Distance(camPos, a.transform.position)
+                .CompareTo(Vector3.Distance(camPos, b.transform.position)));
+
+        return shelves;
+    }
+
+    private bool HasShelfSetChanged(List<ShelfSection> currentShelves)
+    {
+        if (currentShelves.Count != _previousShelfSet.Count) return true;
+
+        foreach (ShelfSection shelf in currentShelves)
+        {
+            if (!_previousShelfSet.Contains(shelf)) return true;
+        }
+
+        return false;
+    }
+
+    private void UpdatePreviousShelfSet()
+    {
+        _previousShelfSet.Clear();
+        foreach (ShelfSection shelf in _nearbyShelves)
+        {
+            _previousShelfSet.Add(shelf);
+        }
     }
 
     private ShelfSlot GetTargetedShelfSlot()
@@ -352,12 +428,14 @@ public class ItemPlacementManager : MonoBehaviour
             if (slot == null)
                 slot = hit.collider.GetComponentInParent<ShelfSlot>();
 
-            // Only return slots that belong to the nearby shelf
-            if (slot != null && _nearbyShelf != null)
+            // Only return slots that belong to one of the nearby shelves
+            if (slot != null && _nearbyShelves.Count > 0)
             {
-                // Verify the slot is part of the nearby shelf
-                if (_nearbyShelf.GetSlots().Contains(slot))
-                    return slot;
+                foreach (ShelfSection shelf in _nearbyShelves)
+                {
+                    if (shelf.GetSlots().Contains(slot))
+                        return slot;
+                }
             }
 
             return slot;
@@ -365,36 +443,16 @@ public class ItemPlacementManager : MonoBehaviour
         return null;
     }
 
-    private void SetState(PlacementState newState, string prompt)
-    {
-        if (State != newState && logStateChanges)
-        {
-            Debug.Log($"[ItemPlacementManager] State: {State} → {newState}");
-        }
+    #endregion
 
-        State = newState;
-        CurrentPrompt = prompt;
-    }
-
-    private void ClearProximityState()
-    {
-        ClearGhostPreview();
-        _nearbyShelf = null;
-        _targetSlot = null;
-        _currentMissingItems.Clear();
-        _randomlySelectedCategory = null;
-        CurrentlySelectedCategory = null;
-    }
+    #region Ghost Preview
 
     private void UpdateGhostPreview()
     {
         if (_activeBox == null || _targetSlot == null) return;
 
         ItemCategory category = CurrentlySelectedCategory;
-        if (category == null) return;
-
-        GameObject prefab = _activeBox.GetItemPrefab(category);
-        if (prefab == null) return;
+        if (category == null || category.prefab == null) return;
 
         // Get next placement position from slot
         int nextIndex = _targetSlot.CurrentItemCount;
@@ -403,7 +461,6 @@ public class ItemPlacementManager : MonoBehaviour
         ItemPlacement placement = _targetSlot.ItemPlacements[nextIndex];
         Vector3 worldPos = _targetSlot.transform.TransformPoint(placement.positionOffset);
 
-        // Calculate rotation including category offset
         // Calculate rotation: slot offset * category offset
         Quaternion worldRot = _targetSlot.transform.rotation * Quaternion.Euler(placement.rotationOffset);
         if (category != null)
@@ -414,7 +471,7 @@ public class ItemPlacementManager : MonoBehaviour
         // Create or update ghost preview
         if (_ghostPreviewInstance == null)
         {
-            _ghostPreviewInstance = Instantiate(prefab);
+            _ghostPreviewInstance = Instantiate(category.prefab);
             _ghostPreviewInstance.name = "GhostPreview";
 
             // Disable physics and colliders
@@ -466,10 +523,37 @@ public class ItemPlacementManager : MonoBehaviour
         }
     }
 
+    #endregion
+
+    #region State Management
+
+    private void SetState(PlacementState newState, string prompt)
+    {
+        if (State != newState && logStateChanges)
+        {
+            Debug.Log($"[ItemPlacementManager] State: {State} → {newState}");
+        }
+
+        State = newState;
+        CurrentPrompt = prompt;
+    }
+
+    private void ClearProximityState()
+    {
+        ClearGhostPreview();
+        _nearbyShelves.Clear();
+        _previousShelfSet.Clear();
+        _targetSlot = null;
+        _itemQueue.Clear();
+        CurrentlySelectedCategory = null;
+    }
+
     private void OnDisable()
     {
         ClearProximityState();
     }
+
+    #endregion
 
 #if UNITY_EDITOR
     private void OnDrawGizmosSelected()
