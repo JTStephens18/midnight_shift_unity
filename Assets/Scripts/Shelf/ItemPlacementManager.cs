@@ -25,6 +25,12 @@ public class ItemPlacementManager : MonoBehaviour
     [SerializeField] private int queueLockCount = 2;
 
     [Header("Ghost Preview")]
+    [Tooltip("Whether the ghost item preview is currently enabled.")]
+    [SerializeField] private bool showItemPreview = true;
+
+    [Tooltip("Key to toggle the ghost item preview on/off.")]
+    [SerializeField] private KeyCode togglePreviewKey = KeyCode.Tab;
+
     [Tooltip("Material to apply to ghost preview objects (should be semi-transparent).")]
     [SerializeField] private Material ghostMaterial;
 
@@ -49,8 +55,10 @@ public class ItemPlacementManager : MonoBehaviour
     private InventoryBox _activeBox;
     private List<ShelfSection> _nearbyShelves = new List<ShelfSection>();
     private ShelfSlot _targetSlot;
-    private GameObject _ghostPreviewInstance;
     private Camera _playerCamera;
+
+    // Ghost preview pool: one ghost per available shelf slot
+    private Dictionary<ShelfSlot, GameObject> _ghostPreviews = new Dictionary<ShelfSlot, GameObject>();
 
     // Item queue
     private List<ItemCategory> _itemQueue = new List<ItemCategory>();
@@ -80,6 +88,18 @@ public class ItemPlacementManager : MonoBehaviour
 
     private void Update()
     {
+        // Toggle ghost preview
+        if (Input.GetKeyDown(togglePreviewKey))
+        {
+            showItemPreview = !showItemPreview;
+
+            if (!showItemPreview)
+                ClearAllGhostPreviews();
+
+            if (logStateChanges)
+                Debug.Log($"[ItemPlacementManager] Item preview toggled: {(showItemPreview ? "ON" : "OFF")}");
+        }
+
         UpdatePlacementState();
     }
 
@@ -99,7 +119,7 @@ public class ItemPlacementManager : MonoBehaviour
         if (!_activeBox.HasAnyStock())
         {
             SetState(PlacementState.Disabled, emptyBoxPrompt);
-            ClearGhostPreview();
+            ClearAllGhostPreviews();
             return;
         }
 
@@ -114,11 +134,16 @@ public class ItemPlacementManager : MonoBehaviour
             RebuildItemQueue();
         }
 
+        // Show ghost previews on ALL available slots (regardless of aim)
+        if (showItemPreview && _nearbyShelves.Count > 0)
+            UpdateAllGhostPreviews();
+        else
+            ClearAllGhostPreviews();
+
         // If no nearby shelves while holding box
         if (_nearbyShelves.Count == 0)
         {
             SetState(PlacementState.Idle, string.Empty);
-            ClearGhostPreview();
             _targetSlot = null;
             return;
         }
@@ -130,7 +155,6 @@ public class ItemPlacementManager : MonoBehaviour
         if (nextItem == null)
         {
             SetState(PlacementState.Disabled, "Shelf is fully stocked");
-            ClearGhostPreview();
             _targetSlot = null;
             return;
         }
@@ -142,7 +166,6 @@ public class ItemPlacementManager : MonoBehaviour
         {
             // Near shelf but not aiming at a slot
             SetState(PlacementState.Idle, $"Aim at slot to place: {nextItem.name}");
-            ClearGhostPreview();
             return;
         }
 
@@ -153,7 +176,6 @@ public class ItemPlacementManager : MonoBehaviour
         if (_targetSlot.IsOccupied)
         {
             SetState(PlacementState.Disabled, slotFullPrompt);
-            ClearGhostPreview();
             return;
         }
 
@@ -161,7 +183,6 @@ public class ItemPlacementManager : MonoBehaviour
         if (slotCategory != null && nextItem != slotCategory)
         {
             SetState(PlacementState.Disabled, $"{categoryMismatchPrompt} - needs {slotCategory.name}");
-            ClearGhostPreview();
             return;
         }
 
@@ -173,7 +194,6 @@ public class ItemPlacementManager : MonoBehaviour
         string prompt = $"Press E to Place {nextItem.name} ({currentCount + 1}/{maxCount})";
 
         SetState(PlacementState.Ready, prompt);
-        UpdateGhostPreview();
     }
 
     #region Item Queue
@@ -280,8 +300,8 @@ public class ItemPlacementManager : MonoBehaviour
             // Decrement box inventory
             _activeBox.Decrement();
 
-            // Clear ghost preview
-            ClearGhostPreview();
+            // Refresh ghost previews after placement
+            ClearAllGhostPreviews();
 
             if (logStateChanges)
                 Debug.Log($"[ItemPlacementManager] Placed {category.name} on {_targetSlot.gameObject.name}. Box remaining: {_activeBox.GetRemainingCount()}");
@@ -447,48 +467,87 @@ public class ItemPlacementManager : MonoBehaviour
 
     #region Ghost Preview
 
-    private void UpdateGhostPreview()
+    /// <summary>
+    /// Shows ghost previews only on slots that match the next item in the queue.
+    /// </summary>
+    private void UpdateAllGhostPreviews()
     {
-        if (_activeBox == null || _targetSlot == null) return;
+        if (_activeBox == null) return;
 
-        ItemCategory category = CurrentlySelectedCategory;
-        if (category == null || category.prefab == null) return;
-
-        // Get next placement position from slot
-        int nextIndex = _targetSlot.CurrentItemCount;
-        if (nextIndex >= _targetSlot.ItemPlacements.Count) return;
-
-        ItemPlacement placement = _targetSlot.ItemPlacements[nextIndex];
-        Vector3 worldPos = _targetSlot.transform.TransformPoint(placement.positionOffset);
-
-        // Calculate rotation: slot offset * category offset
-        Quaternion worldRot = _targetSlot.transform.rotation * Quaternion.Euler(placement.rotationOffset);
-        if (category != null)
+        // Only show ghosts for the FIRST item in the queue
+        ItemCategory nextCategory = _itemQueue.Count > 0 ? _itemQueue[0] : null;
+        if (nextCategory == null || nextCategory.prefab == null)
         {
-            worldRot *= Quaternion.Euler(category.shelfRotationOffset);
+            ClearAllGhostPreviews();
+            return;
         }
 
-        // Create or update ghost preview
-        if (_ghostPreviewInstance == null)
+        // Track which slots we've processed this frame
+        HashSet<ShelfSlot> activeSlots = new HashSet<ShelfSlot>();
+
+        foreach (ShelfSection shelf in _nearbyShelves)
         {
-            _ghostPreviewInstance = Instantiate(category.prefab);
-            _ghostPreviewInstance.name = "GhostPreview";
+            foreach (ShelfSlot slot in shelf.GetSlots())
+            {
+                // Skip full slots or slots that don't match the next queue item
+                if (slot.IsOccupied || slot.AcceptedCategory == null) continue;
+                if (slot.AcceptedCategory != nextCategory) continue;
 
-            // Disable physics and colliders
-            Rigidbody rb = _ghostPreviewInstance.GetComponent<Rigidbody>();
-            if (rb != null) rb.isKinematic = true;
+                ItemCategory category = slot.AcceptedCategory;
+                if (category.prefab == null) continue;
 
-            Collider[] colliders = _ghostPreviewInstance.GetComponentsInChildren<Collider>();
-            foreach (Collider col in colliders)
-                col.enabled = false;
+                // Get next placement position
+                int nextIndex = slot.CurrentItemCount;
+                if (nextIndex >= slot.ItemPlacements.Count) continue;
 
-            // Apply ghost material
-            ApplyGhostMaterial(_ghostPreviewInstance);
+                activeSlots.Add(slot);
+
+                ItemPlacement placement = slot.ItemPlacements[nextIndex];
+                Vector3 worldPos = slot.transform.TransformPoint(placement.positionOffset);
+
+                // Calculate rotation: slot offset * category offset
+                Quaternion worldRot = slot.transform.rotation * Quaternion.Euler(placement.rotationOffset);
+                worldRot *= Quaternion.Euler(category.shelfRotationOffset);
+
+                // Create ghost if it doesn't exist for this slot
+                if (!_ghostPreviews.TryGetValue(slot, out GameObject ghost) || ghost == null)
+                {
+                    ghost = Instantiate(category.prefab);
+                    ghost.name = $"GhostPreview_{slot.gameObject.name}";
+
+                    // Disable physics and colliders
+                    Rigidbody rb = ghost.GetComponent<Rigidbody>();
+                    if (rb != null) rb.isKinematic = true;
+
+                    Collider[] colliders = ghost.GetComponentsInChildren<Collider>();
+                    foreach (Collider col in colliders)
+                        col.enabled = false;
+
+                    ApplyGhostMaterial(ghost);
+                    _ghostPreviews[slot] = ghost;
+                }
+
+                // Update position and rotation
+                ghost.transform.position = worldPos;
+                ghost.transform.rotation = worldRot;
+            }
         }
 
-        // Update position and rotation
-        _ghostPreviewInstance.transform.position = worldPos;
-        _ghostPreviewInstance.transform.rotation = worldRot;
+        // Clean up ghosts for slots that are no longer available
+        List<ShelfSlot> toRemove = new List<ShelfSlot>();
+        foreach (var kvp in _ghostPreviews)
+        {
+            if (!activeSlots.Contains(kvp.Key))
+            {
+                if (kvp.Value != null)
+                    Destroy(kvp.Value);
+                toRemove.Add(kvp.Key);
+            }
+        }
+        foreach (ShelfSlot key in toRemove)
+        {
+            _ghostPreviews.Remove(key);
+        }
     }
 
     private void ApplyGhostMaterial(GameObject obj)
@@ -514,13 +573,17 @@ public class ItemPlacementManager : MonoBehaviour
         }
     }
 
-    private void ClearGhostPreview()
+    /// <summary>
+    /// Destroys all ghost preview instances.
+    /// </summary>
+    private void ClearAllGhostPreviews()
     {
-        if (_ghostPreviewInstance != null)
+        foreach (var kvp in _ghostPreviews)
         {
-            Destroy(_ghostPreviewInstance);
-            _ghostPreviewInstance = null;
+            if (kvp.Value != null)
+                Destroy(kvp.Value);
         }
+        _ghostPreviews.Clear();
     }
 
     #endregion
@@ -540,7 +603,7 @@ public class ItemPlacementManager : MonoBehaviour
 
     private void ClearProximityState()
     {
-        ClearGhostPreview();
+        ClearAllGhostPreviews();
         _nearbyShelves.Clear();
         _previousShelfSet.Clear();
         _targetSlot = null;
