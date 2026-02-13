@@ -111,9 +111,18 @@ public class ItemPlacementManager : MonoBehaviour
         InventoryBox prevBox = _activeBox;
         _activeBox = GetHeldInventoryBox();
 
-        // Cache BoxItemPreview when we pick up a new box
+        // Handle box change (picked up a new one or dropped the old one)
         if (_activeBox != prevBox)
         {
+            // Close the previous box if it was open (e.g., player dropped it near shelves)
+            if (prevBox != null && prevBox.IsOpen)
+            {
+                BoxItemPreview prevPreview = prevBox.GetComponent<BoxItemPreview>();
+                if (prevPreview != null)
+                    prevPreview.ClearPreviews();
+                prevBox.CloseBox();
+            }
+
             _boxPreview = _activeBox != null ? _activeBox.GetComponent<BoxItemPreview>() : null;
         }
 
