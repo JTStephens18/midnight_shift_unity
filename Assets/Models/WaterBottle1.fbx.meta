@@ -3,22 +3,7 @@ guid: dec30887d070b0a40b456cbdd233cf9d
 ModelImporter:
   serializedVersion: 22200
   internalIDToNameTable: []
-  externalObjects:
-  - first:
-      type: UnityEngine:Material
-      assembly: UnityEngine.CoreModule
-      name: CapTexture
-    second: {fileID: 2100000, guid: d42a66946ea1998419548fd5b2d0f533, type: 2}
-  - first:
-      type: UnityEngine:Material
-      assembly: UnityEngine.CoreModule
-      name: WaterColor1
-    second: {fileID: 2100000, guid: 77fe92a528328b34facb8bcd1c060865, type: 2}
-  - first:
-      type: UnityEngine:Material
-      assembly: UnityEngine.CoreModule
-      name: WaterLabel1
-    second: {fileID: 2100000, guid: 1b500e3d038b5c0468ae9cf5f279c85f, type: 2}
+  externalObjects: {}
   materials:
     materialImportMode: 2
     materialName: 0

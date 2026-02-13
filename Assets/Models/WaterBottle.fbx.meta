@@ -8,17 +8,17 @@ ModelImporter:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
       name: CapTexture
-    second: {fileID: 2100000, guid: 98dfd7e6de18aab459c690bd249158ab, type: 2}
+    second: {fileID: 2100000, guid: 99785d127c06d5841b932e1d516d2340, type: 2}
   - first:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
       name: WaterLabel2
-    second: {fileID: 2100000, guid: cf00be575bd882b409b8ffd1f2686c3f, type: 2}
+    second: {fileID: 2100000, guid: ebf5c24b90535e34a8b7efd62665fa22, type: 2}
   - first:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
       name: WaterTexture2
-    second: {fileID: 2100000, guid: 9feebcb0774c7d5489cd5bd3edbebdad, type: 2}
+    second: {fileID: 2100000, guid: dca6a38d7f39e4b42a23317f18f88da6, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0
