@@ -34,6 +34,8 @@ public class InventoryBox : MonoBehaviour
     private bool _isDestroying = false;
     private bool _isOpen = false;
     private Coroutine _openCloseCoroutine;
+    private Vector3 _closedModelOriginalScale;
+    private Vector3 _openModelOriginalScale;
 
     /// <summary>
     /// Whether the box is currently in the open visual state.
@@ -43,6 +45,10 @@ public class InventoryBox : MonoBehaviour
     private void Awake()
     {
         _remainingItems = totalItems;
+
+        // Cache original scales before any animation modifies them
+        if (closedModel != null) _closedModelOriginalScale = closedModel.transform.localScale;
+        if (openModel != null) _openModelOriginalScale = openModel.transform.localScale;
 
         // Start with closed model visible, open model hidden
         if (closedModel != null) closedModel.SetActive(true);
@@ -57,9 +63,7 @@ public class InventoryBox : MonoBehaviour
         if (_isOpen || _isDestroying) return;
         _isOpen = true;
 
-        if (_openCloseCoroutine != null)
-            StopCoroutine(_openCloseCoroutine);
-
+        StopAndResetOpenClose();
         _openCloseCoroutine = StartCoroutine(AnimateOpenClose(open: true));
     }
 
@@ -71,18 +75,34 @@ public class InventoryBox : MonoBehaviour
         if (!_isOpen || _isDestroying) return;
         _isOpen = false;
 
-        if (_openCloseCoroutine != null)
-            StopCoroutine(_openCloseCoroutine);
-
+        StopAndResetOpenClose();
         _openCloseCoroutine = StartCoroutine(AnimateOpenClose(open: false));
+    }
+
+    /// <summary>
+    /// Stops any in-progress open/close animation and restores both models
+    /// to their original scales so the next animation starts clean.
+    /// </summary>
+    private void StopAndResetOpenClose()
+    {
+        if (_openCloseCoroutine != null)
+        {
+            StopCoroutine(_openCloseCoroutine);
+            _openCloseCoroutine = null;
+        }
+
+        // Reset scales so a half-finished animation doesn't corrupt future ones
+        if (closedModel != null) closedModel.transform.localScale = _closedModelOriginalScale;
+        if (openModel != null) openModel.transform.localScale = _openModelOriginalScale;
     }
 
     private IEnumerator AnimateOpenClose(bool open)
     {
-        // The model being revealed scales from 0 → 1
+        // The model being revealed scales from 0 → original
         // The model being hidden is instantly deactivated
         GameObject showModel = open ? openModel : closedModel;
         GameObject hideModel = open ? closedModel : openModel;
+        Vector3 targetScale = open ? _openModelOriginalScale : _closedModelOriginalScale;
 
         if (hideModel != null)
             hideModel.SetActive(false);
@@ -90,7 +110,6 @@ public class InventoryBox : MonoBehaviour
         if (showModel != null)
         {
             showModel.SetActive(true);
-            Vector3 targetScale = showModel.transform.localScale;
             showModel.transform.localScale = Vector3.zero;
 
             float elapsed = 0f;
