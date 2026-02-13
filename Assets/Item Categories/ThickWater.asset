@@ -13,5 +13,5 @@ MonoBehaviour:
   m_Name: ThickWater
   m_EditorClassIdentifier: 
   description: 
-  prefab: {fileID: 0}
+  prefab: {fileID: 341239594178666260, guid: 6691f766343d56e42a3dc6f309e43db0, type: 3}
   shelfRotationOffset: {x: 0, y: 0, z: 0}

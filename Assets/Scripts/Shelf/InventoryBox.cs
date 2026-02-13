@@ -13,6 +13,16 @@ public class InventoryBox : MonoBehaviour
     [Tooltip("Total number of items this box can dispense before being destroyed.")]
     [SerializeField] private int totalItems = 8;
 
+    [Header("Box Visuals")]
+    [Tooltip("Reference to the closed box child mesh.")]
+    [SerializeField] private GameObject closedModel;
+
+    [Tooltip("Reference to the open box child mesh.")]
+    [SerializeField] private GameObject openModel;
+
+    [Tooltip("Duration of the open/close scale animation.")]
+    [SerializeField] private float openCloseDuration = 0.3f;
+
     [Header("Shrink Animation")]
     [Tooltip("Duration of the shrink animation when the box is emptied.")]
     [SerializeField] private float shrinkDuration = 0.5f;
@@ -22,10 +32,80 @@ public class InventoryBox : MonoBehaviour
 
     private int _remainingItems;
     private bool _isDestroying = false;
+    private bool _isOpen = false;
+    private Coroutine _openCloseCoroutine;
+
+    /// <summary>
+    /// Whether the box is currently in the open visual state.
+    /// </summary>
+    public bool IsOpen => _isOpen;
 
     private void Awake()
     {
         _remainingItems = totalItems;
+
+        // Start with closed model visible, open model hidden
+        if (closedModel != null) closedModel.SetActive(true);
+        if (openModel != null) openModel.SetActive(false);
+    }
+
+    /// <summary>
+    /// Transitions to the open visual state with a scale-up animation.
+    /// </summary>
+    public void OpenBox()
+    {
+        if (_isOpen || _isDestroying) return;
+        _isOpen = true;
+
+        if (_openCloseCoroutine != null)
+            StopCoroutine(_openCloseCoroutine);
+
+        _openCloseCoroutine = StartCoroutine(AnimateOpenClose(open: true));
+    }
+
+    /// <summary>
+    /// Transitions to the closed visual state with a scale-up animation.
+    /// </summary>
+    public void CloseBox()
+    {
+        if (!_isOpen || _isDestroying) return;
+        _isOpen = false;
+
+        if (_openCloseCoroutine != null)
+            StopCoroutine(_openCloseCoroutine);
+
+        _openCloseCoroutine = StartCoroutine(AnimateOpenClose(open: false));
+    }
+
+    private IEnumerator AnimateOpenClose(bool open)
+    {
+        // The model being revealed scales from 0 → 1
+        // The model being hidden is instantly deactivated
+        GameObject showModel = open ? openModel : closedModel;
+        GameObject hideModel = open ? closedModel : openModel;
+
+        if (hideModel != null)
+            hideModel.SetActive(false);
+
+        if (showModel != null)
+        {
+            showModel.SetActive(true);
+            Vector3 targetScale = showModel.transform.localScale;
+            showModel.transform.localScale = Vector3.zero;
+
+            float elapsed = 0f;
+            while (elapsed < openCloseDuration)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / openCloseDuration));
+                showModel.transform.localScale = targetScale * t;
+                yield return null;
+            }
+
+            showModel.transform.localScale = targetScale;
+        }
+
+        _openCloseCoroutine = null;
     }
 
     /// <summary>

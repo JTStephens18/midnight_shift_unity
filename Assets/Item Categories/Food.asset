@@ -13,4 +13,5 @@ MonoBehaviour:
   m_Name: Food
   m_EditorClassIdentifier: 
   description: 
+  prefab: {fileID: 273938583853655176, guid: 27aa958f2033e8e4c810149f71198aa0, type: 3}
   shelfRotationOffset: {x: -90, y: 0, z: 0}

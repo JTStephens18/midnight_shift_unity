@@ -13,4 +13,5 @@ MonoBehaviour:
   m_Name: Drink
   m_EditorClassIdentifier: 
   description: 
+  prefab: {fileID: 6114474387162918293, guid: 7d29bff18bfe92f42ae22513b9ce95bf, type: 3}
   shelfRotationOffset: {x: -90, y: 0, z: 0}

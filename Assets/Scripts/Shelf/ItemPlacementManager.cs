@@ -53,6 +53,7 @@ public class ItemPlacementManager : MonoBehaviour
 
     // Cached references
     private InventoryBox _activeBox;
+    private BoxItemPreview _boxPreview;
     private List<ShelfSection> _nearbyShelves = new List<ShelfSection>();
     private ShelfSlot _targetSlot;
     private Camera _playerCamera;
@@ -65,6 +66,7 @@ public class ItemPlacementManager : MonoBehaviour
 
     // Track shelf set for change detection
     private HashSet<ShelfSection> _previousShelfSet = new HashSet<ShelfSection>();
+    private bool _wasNearShelves = false;
 
     // Singleton for easy access
     public static ItemPlacementManager Instance { get; private set; }
@@ -106,7 +108,14 @@ public class ItemPlacementManager : MonoBehaviour
     private void UpdatePlacementState()
     {
         // Check if player is holding an inventory box
+        InventoryBox prevBox = _activeBox;
         _activeBox = GetHeldInventoryBox();
+
+        // Cache BoxItemPreview when we pick up a new box
+        if (_activeBox != prevBox)
+        {
+            _boxPreview = _activeBox != null ? _activeBox.GetComponent<BoxItemPreview>() : null;
+        }
 
         if (_activeBox == null)
         {
@@ -125,6 +134,22 @@ public class ItemPlacementManager : MonoBehaviour
 
         // Detect all nearby shelf sections
         List<ShelfSection> currentShelves = DetectNearbyShelfSections();
+        bool isNearShelves = currentShelves.Count > 0;
+
+        // Detect shelf proximity transitions for open/close
+        if (isNearShelves && !_wasNearShelves)
+        {
+            // Just entered shelf proximity — open the box
+            _activeBox.OpenBox();
+        }
+        else if (!isNearShelves && _wasNearShelves)
+        {
+            // Just left shelf proximity — clear previews and close
+            if (_boxPreview != null)
+                _boxPreview.ClearPreviews();
+            _activeBox.CloseBox();
+        }
+        _wasNearShelves = isNearShelves;
 
         // Check if the set of nearby shelves has changed
         if (HasShelfSetChanged(currentShelves))
@@ -285,6 +310,14 @@ public class ItemPlacementManager : MonoBehaviour
             string queueStr = string.Join(", ", _itemQueue.ConvertAll(c => c != null ? c.name : "null"));
             Debug.Log($"[ItemPlacementManager] Queue rebuilt ({_itemQueue.Count} items, {lockCount} locked): [{queueStr}]");
         }
+
+        // Update box item preview with new front two items
+        if (_boxPreview != null && _activeBox != null && _activeBox.IsOpen)
+        {
+            ItemCategory frontItem = _itemQueue.Count > 0 ? _itemQueue[0] : null;
+            ItemCategory secondItem = _itemQueue.Count > 1 ? _itemQueue[1] : null;
+            _boxPreview.UpdatePreview(frontItem, secondItem);
+        }
     }
 
     #endregion
@@ -323,6 +356,10 @@ public class ItemPlacementManager : MonoBehaviour
         {
             // Decrement box inventory
             _activeBox.Decrement();
+
+            // Trigger swap animation in box preview before rebuilding queue
+            if (_boxPreview != null)
+                _boxPreview.AnimateSlotSwap();
 
             // Refresh ghost previews after placement
             ClearAllGhostPreviews();
@@ -628,11 +665,17 @@ public class ItemPlacementManager : MonoBehaviour
     private void ClearProximityState()
     {
         ClearAllGhostPreviews();
+
+        if (_boxPreview != null)
+            _boxPreview.ClearPreviews();
+
         _nearbyShelves.Clear();
         _previousShelfSet.Clear();
+        _wasNearShelves = false;
         _targetSlot = null;
         _itemQueue.Clear();
         CurrentlySelectedCategory = null;
+        _boxPreview = null;
     }
 
     private void OnDisable()
