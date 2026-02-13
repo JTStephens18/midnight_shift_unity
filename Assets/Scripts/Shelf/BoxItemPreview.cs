@@ -28,6 +28,7 @@ public class BoxItemPreview : MonoBehaviour
 
     // Animation state
     private Coroutine _swapCoroutine;
+    private bool _isSwapping = false;
 
     /// <summary>
     /// Updates the preview items to match the given queue front two categories.
@@ -35,8 +36,8 @@ public class BoxItemPreview : MonoBehaviour
     /// </summary>
     public void UpdatePreview(ItemCategory current, ItemCategory next)
     {
-        // Update slot 1 (current item)
-        if (current != _currentCategory)
+        // Update slot 1 (current item) — skip if a swap is animating into this slot
+        if (current != _currentCategory && !_isSwapping)
         {
             if (_currentInstance != null)
                 Destroy(_currentInstance);
@@ -45,8 +46,9 @@ public class BoxItemPreview : MonoBehaviour
             _currentInstance = (current != null) ? SpawnPreviewItem(current, itemSlot1) : null;
         }
 
-        // Update slot 2 (next item)
-        if (next != _nextCategory)
+        // Update slot 2 (next item) — skip if a swap is in progress
+        // (the coroutine will spawn the new next item when it completes)
+        if (!_isSwapping && next != _nextCategory)
         {
             if (_nextInstance != null)
                 Destroy(_nextInstance);
@@ -68,6 +70,7 @@ public class BoxItemPreview : MonoBehaviour
         {
             StopCoroutine(_swapCoroutine);
             _swapCoroutine = null;
+            _isSwapping = false;
         }
 
         // Destroy the current item (it was just placed on the shelf)
@@ -81,6 +84,7 @@ public class BoxItemPreview : MonoBehaviour
         // If there's a next item, animate it into slot 1
         if (_nextInstance != null)
         {
+            _isSwapping = true;
             _swapCoroutine = StartCoroutine(SlotSwapCoroutine());
         }
     }
@@ -94,6 +98,7 @@ public class BoxItemPreview : MonoBehaviour
         {
             StopCoroutine(_swapCoroutine);
             _swapCoroutine = null;
+            _isSwapping = false;
         }
 
         if (_currentInstance != null)
@@ -148,9 +153,11 @@ public class BoxItemPreview : MonoBehaviour
     private IEnumerator SlotSwapCoroutine()
     {
         if (_nextInstance == null || itemSlot1 == null)
+        {
+            _isSwapping = false;
             yield break;
+        }
 
-        // Unparent so we can lerp in world space, then re-parent at the end
         Transform nextTransform = _nextInstance.transform;
 
         Vector3 startPos = nextTransform.position;
@@ -159,6 +166,14 @@ public class BoxItemPreview : MonoBehaviour
         float elapsed = 0f;
         while (elapsed < swapAnimDuration)
         {
+            // Safety check — instance may have been destroyed externally
+            if (_nextInstance == null)
+            {
+                _isSwapping = false;
+                _swapCoroutine = null;
+                yield break;
+            }
+
             elapsed += Time.deltaTime;
             float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / swapAnimDuration));
 
@@ -166,6 +181,14 @@ public class BoxItemPreview : MonoBehaviour
             nextTransform.rotation = Quaternion.Slerp(startRot, itemSlot1.rotation, t);
 
             yield return null;
+        }
+
+        // Safety check before final snap
+        if (_nextInstance == null)
+        {
+            _isSwapping = false;
+            _swapCoroutine = null;
+            yield break;
         }
 
         // Snap to slot 1 and re-parent
@@ -179,6 +202,7 @@ public class BoxItemPreview : MonoBehaviour
         _nextInstance = null;
         _nextCategory = null;
 
+        _isSwapping = false;
         _swapCoroutine = null;
     }
 }
